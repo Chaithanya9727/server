@@ -1,9 +1,12 @@
+// index.js
 import express from "express";
 import dotenv from "dotenv";
 import connectDB from "./db.js";
 import cors from "cors";
 import http from "http";
-import initSocket from "./socket.js"; // ✅ for real-time chat
+import session from "express-session";
+import passport from "./config/passport.js"; // ✅ KEEP THIS ONE ONLY
+import initSocket from "./socket.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -17,18 +20,18 @@ import statsRoutes from "./routes/stats.js";
 import notificationsRoutes from "./routes/notificationRoutes.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import userActivityRoutes from "./routes/userActivity.js";
-import chatRoutes from "./routes/chat.js"; // ✅ chat REST
+import chatRoutes from "./routes/chat.js";
 
 dotenv.config();
 connectDB();
 
 const app = express();
-app.set("trust proxy", true); // ✅ Required for Render (for IPs, HTTPS redirects)
+app.set("trust proxy", 1); // Render/Proxy support
 
-// ======================= ✅ CORS Configuration =======================
+// ----- ✅ CORS -----
 const allowedOrigins = [
-  "https://onestop-frontend.netlify.app", // ✅ Production (Netlify)
-  "http://localhost:5173", // ✅ Development (Vite local)
+  "https://onestop-frontend.netlify.app",
+  "http://localhost:5173",
 ];
 
 app.use(
@@ -45,10 +48,27 @@ app.use(
   })
 );
 
-// ✅ Parse JSON body
+// ----- ✅ JSON Parser -----
 app.use(express.json());
 
-// ======================= ✅ API Routes =======================
+// ----- ✅ Session (Required for Passport OAuth) -----
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "onestop_session_secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production", // true on Render
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    },
+  })
+);
+
+// ----- ✅ Passport -----
+app.use(passport.initialize());
+app.use(passport.session());
+
+// ----- ✅ API Routes -----
 app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
 app.use("/api/users", userRoutes);
@@ -60,18 +80,16 @@ app.use("/api/stats", statsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/useractivity", userActivityRoutes);
-app.use("/api/chat", chatRoutes); // ✅ Chat REST routes
+app.use("/api/chat", chatRoutes);
 
-// Root route
-app.get("/", (req, res) => {
+// Root
+app.get("/", (_req, res) => {
   res.send("🚀 OneStop Backend API running successfully!");
 });
 
-// ======================= ✅ Server + Socket =======================
+// ----- ✅ Server + Socket -----
 const server = http.createServer(app);
-initSocket(server); // ✅ attach socket.io server
+initSocket(server);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () =>
-  console.log(`🚀 Server + Socket running on port ${PORT}`)
-);
+server.listen(PORT, () => console.log(`🚀 Server + Socket running on port ${PORT}`));
