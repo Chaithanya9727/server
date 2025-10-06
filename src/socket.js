@@ -21,11 +21,11 @@ export default function socketServer(httpServer) {
     },
   });
 
-  // ✅ Authenticate user with JWT token
+  // ✅ Authenticate user with JWT
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
-      if (!token) return next(new Error("No token"));
+      if (!token) return next(new Error("No token provided"));
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.id);
@@ -38,7 +38,7 @@ export default function socketServer(httpServer) {
     }
   });
 
-  // ✅ When user connects
+  // ✅ When a user connects
   io.on("connection", (socket) => {
     const userId = socket.user._id.toString();
     activeUsers.set(userId, socket.id);
@@ -47,7 +47,7 @@ export default function socketServer(httpServer) {
     io.emit("presence:update", { userId, online: true });
 
     /**
-     * ✅ Send message
+     * ✅ Send Message
      */
     socket.on("message:send", async ({ conversationId, to, body }, cb) => {
       try {
@@ -67,18 +67,24 @@ export default function socketServer(httpServer) {
           lastMessageAt: new Date(),
         });
 
-        const populated = await Message.findById(msg._id).populate(
-          "from to",
-          "name email avatar"
-        );
+        // ✅ Clean message object with string IDs (avoid frontend alignment issues)
+        const populated = await Message.findById(msg._id)
+          .populate("from to", "name email avatar")
+          .lean();
 
+        // Force IDs to be plain strings for comparison in frontend
+        populated.from = populated.from._id.toString();
+        populated.to = populated.to._id.toString();
+
+        // ✅ Emit message to receiver (if online)
         const targetSocket = activeUsers.get(to);
         if (targetSocket) {
           io.to(targetSocket).emit("message:new", { message: populated });
           populated.status = "delivered";
-          await populated.save();
+          await Message.findByIdAndUpdate(msg._id, { status: "delivered" });
         }
 
+        // ✅ Return message to sender
         cb?.({ ok: true, message: populated });
       } catch (err) {
         console.error("Send error:", err);
@@ -87,7 +93,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Delete message
+     * ✅ Delete Message
      */
     socket.on("message:delete", async ({ messageId, mode }, cb) => {
       try {
@@ -108,6 +114,7 @@ export default function socketServer(httpServer) {
               mode: "everyone",
             });
           }
+
           io.to(socket.id).emit("message:deleted", {
             messageId: msg._id,
             mode: "everyone",
@@ -134,7 +141,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Typing indicator
+     * ✅ Typing Indicator
      */
     socket.on("typing", ({ to, conversationId, typing }) => {
       const targetSocket = activeUsers.get(to);
@@ -148,7 +155,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Mark as seen/delivered
+     * ✅ Message Status Update
      */
     socket.on("message:mark", async ({ messageId, status }) => {
       try {
@@ -156,6 +163,7 @@ export default function socketServer(httpServer) {
         if (msg && msg.to.toString() === userId) {
           msg.status = status;
           await msg.save();
+
           const fromSocket = activeUsers.get(msg.from.toString());
           if (fromSocket) {
             io.to(fromSocket).emit("message:update", {
@@ -170,7 +178,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Handle disconnection
+     * ✅ Disconnect
      */
     socket.on("disconnect", () => {
       activeUsers.delete(userId);
