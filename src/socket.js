@@ -7,11 +7,21 @@ import Message from "./models/Message.js";
 const activeUsers = new Map();
 
 export default function socketServer(httpServer) {
+  // ✅ Allow both Netlify (production) and localhost (dev)
+  const allowedOrigins = [
+    "https://onestop-frontend.netlify.app",
+    "http://localhost:5173",
+  ];
+
   const io = new Server(httpServer, {
-    cors: { origin: "http://localhost:5173", credentials: true },
+    cors: {
+      origin: allowedOrigins,
+      credentials: true,
+      methods: ["GET", "POST"],
+    },
   });
 
-  // ✅ Authenticate
+  // ✅ Authenticate user with JWT token
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
@@ -28,22 +38,21 @@ export default function socketServer(httpServer) {
     }
   });
 
+  // ✅ When user connects
   io.on("connection", (socket) => {
     const userId = socket.user._id.toString();
     activeUsers.set(userId, socket.id);
-    console.log("✅ User connected:", socket.user.name);
+    console.log(`✅ User connected: ${socket.user.name}`);
 
-    // Broadcast presence
     io.emit("presence:update", { userId, online: true });
 
     /**
-     * ✅ Send Message
+     * ✅ Send message
      */
     socket.on("message:send", async ({ conversationId, to, body }, cb) => {
       try {
-        if (!conversationId || !to) {
+        if (!conversationId || !to)
           return cb?.({ ok: false, error: "Invalid recipient or conversation" });
-        }
 
         const msg = await Message.create({
           conversation: conversationId,
@@ -63,7 +72,6 @@ export default function socketServer(httpServer) {
           "name email avatar"
         );
 
-        // Emit to recipient if online
         const targetSocket = activeUsers.get(to);
         if (targetSocket) {
           io.to(targetSocket).emit("message:new", { message: populated });
@@ -71,7 +79,6 @@ export default function socketServer(httpServer) {
           await populated.save();
         }
 
-        // Echo back to sender
         cb?.({ ok: true, message: populated });
       } catch (err) {
         console.error("Send error:", err);
@@ -80,7 +87,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Delete Message
+     * ✅ Delete message
      */
     socket.on("message:delete", async ({ messageId, mode }, cb) => {
       try {
@@ -88,15 +95,12 @@ export default function socketServer(httpServer) {
         if (!msg) return cb?.({ ok: false, error: "Message not found" });
 
         if (mode === "everyone") {
-          // Only sender can delete for everyone
-          if (msg.from.toString() !== userId) {
+          if (msg.from.toString() !== userId)
             return cb?.({ ok: false, error: "Not allowed" });
-          }
 
           msg.body = "❌ Message deleted";
           await msg.save();
 
-          // Notify both
           const targetSocket = activeUsers.get(msg.to.toString());
           if (targetSocket) {
             io.to(targetSocket).emit("message:deleted", {
@@ -111,7 +115,6 @@ export default function socketServer(httpServer) {
 
           cb?.({ ok: true });
         } else if (mode === "me") {
-          // Add userId to deletedFor
           if (!msg.deletedFor.includes(userId)) {
             msg.deletedFor.push(userId);
             await msg.save();
@@ -134,7 +137,6 @@ export default function socketServer(httpServer) {
      * ✅ Typing indicator
      */
     socket.on("typing", ({ to, conversationId, typing }) => {
-      if (!to || !conversationId) return;
       const targetSocket = activeUsers.get(to);
       if (targetSocket) {
         io.to(targetSocket).emit("typing", {
@@ -146,7 +148,7 @@ export default function socketServer(httpServer) {
     });
 
     /**
-     * ✅ Mark message as seen/delivered
+     * ✅ Mark as seen/delivered
      */
     socket.on("message:mark", async ({ messageId, status }) => {
       try {
@@ -167,13 +169,15 @@ export default function socketServer(httpServer) {
       }
     });
 
+    /**
+     * ✅ Handle disconnection
+     */
     socket.on("disconnect", () => {
       activeUsers.delete(userId);
       io.emit("presence:update", { userId, online: false });
-      console.log("❌ User disconnected:", socket.user.name);
+      console.log(`❌ User disconnected: ${socket.user.name}`);
     });
   });
 
   return io;
 }
-

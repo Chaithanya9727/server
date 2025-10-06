@@ -23,20 +23,32 @@ dotenv.config();
 connectDB();
 
 const app = express();
-app.set("trust proxy", true); // ✅ for correct client IPs
+app.set("trust proxy", true); // ✅ Required for Render (for IPs, HTTPS redirects)
 
-// ✅ Enable CORS for frontend
+// ======================= ✅ CORS Configuration =======================
+const allowedOrigins = [
+  "https://onestop-frontend.netlify.app", // ✅ Production (Netlify)
+  "http://localhost:5173", // ✅ Development (Vite local)
+];
+
 app.use(
   cors({
-    origin: "https://onestop-frontend.netlify.app/",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true,
   })
 );
 
-// ✅ Parse JSON
+// ✅ Parse JSON body
 app.use(express.json());
 
-// ================= Routes =================
+// ======================= ✅ API Routes =======================
 app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
 app.use("/api/users", userRoutes);
@@ -52,14 +64,14 @@ app.use("/api/chat", chatRoutes); // ✅ Chat REST routes
 
 // Root route
 app.get("/", (req, res) => {
-  res.send("🚀 OneStop API running...");
+  res.send("🚀 OneStop Backend API running successfully!");
 });
 
-// ================= Server + Socket =================
+// ======================= ✅ Server + Socket =======================
 const server = http.createServer(app);
-initSocket(server); // ✅ attach socket.io
+initSocket(server); // ✅ attach socket.io server
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () =>
-  console.log(`🚀 Server + Socket running on http://localhost:${PORT}`)
+  console.log(`🚀 Server + Socket running on port ${PORT}`)
 );
