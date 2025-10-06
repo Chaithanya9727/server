@@ -28,7 +28,7 @@ app.set("trust proxy", true); // ✅ for correct client IPs
 // ✅ Enable CORS for frontend
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://onestop-frontend.netlify.app/",
     credentials: true,
   })
 );

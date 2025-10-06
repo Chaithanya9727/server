@@ -124,7 +124,7 @@ router.post("/forgot-password", async (req, res) => {
     user.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
     await user.save({ validateBeforeSave: false });
 
-    const resetUrl = `${process.env.CLIENT_URL || "http://localhost:5173"}/reset-password/${resetToken}`;
+    const resetUrl = `${process.env.CLIENT_URL || "https://onestop-frontend.netlify.app/"}/reset-password/${resetToken}`;
     const message = `Hello ${user.name},\n\nReset your password:\n${resetUrl}\n\nThis link is valid for 15 minutes.`;
 
     await sendEmail(user.email, "Password Reset Request", message);
