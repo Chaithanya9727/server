@@ -6,9 +6,10 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
 
-    email: { type: String, required: true, unique: true, lowercase: true },
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
 
-    password: { type: String, required: true, minlength: 6, select: true },
+    // Hide by default; explicitly select in login
+    password: { type: String, required: true, minlength: 6, select: false },
 
     role: {
       type: String,
@@ -18,7 +19,9 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
-    avatar: { type: String, default: "" }, // ✅ Cloudinary profile picture
+    mobile: { type: String, default: "" }, // ✅ used by /send-otp for SMS
+
+    avatar: { type: String, default: "" },
 
     resetPasswordToken: String,
     resetPasswordExpire: Date,
@@ -45,17 +48,15 @@ userSchema.pre("save", async function (next) {
   next();
 });
 
-// ✅ Ensure role is always lowercase
+// ✅ Ensure role is always lowercase/trimmed
 userSchema.pre("save", function (next) {
-  if (this.role) {
-    this.role = this.role.toLowerCase().trim();
-  }
+  if (this.role) this.role = this.role.toLowerCase().trim();
   next();
 });
 
-// ✅ Compare entered password with hashed password
+// ✅ Compare passwords
 userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
 export default mongoose.model("User", userSchema);
