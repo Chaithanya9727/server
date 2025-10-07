@@ -5,31 +5,3 @@
 *.env
 .env.local
 
-# Node modules
-node_modules/
-npm-debug.log
-yarn-error.log
-
-# Logs
-logs
-*.log
-log.txt
-
-# Runtime data
-pids
-*.pid
-*.seed
-
-# IDE files
-.vscode/
-.idea/
-.DS_Store
-
-# Build output
-dist/
-build/
-coverage/
-
-# Uploads
-uploads/
-public/temp/
