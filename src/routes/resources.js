@@ -8,11 +8,11 @@ import AuditLog from "../models/AuditLog.js";
 const router = express.Router();
 const upload = multer({ dest: "uploads/" }); // temporary storage
 
-// 📌 Upload file → Cloudinary (students/admins)
+// 📌 Upload file → Cloudinary (candidates/admins)
 router.post(
   "/upload",
   protect,
-  authorize(["student", "admin"]),   // ✅ FIXED
+  authorize(["candidate", "admin"]),   // ✅ FIXED
   upload.single("file"),
   async (req, res) => {
     try {
@@ -84,8 +84,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 📌 Students + Admins → create resource
-router.post("/", protect, authorize(["student", "admin"]), async (req, res) => {
+// 📌 candidates + Admins → create resource
+router.post("/", protect, authorize(["candidate", "admin"]), async (req, res) => {
   try {
     const { title, description, type, url } = req.body;
     if (!title) return res.status(400).json({ message: "Title is required" });
@@ -116,8 +116,8 @@ router.post("/", protect, authorize(["student", "admin"]), async (req, res) => {
   }
 });
 
-// 📌 Students + Admins → update (own) | Admin → update any
-router.put("/:id", protect, authorize(["student", "admin"]), async (req, res) => {
+// 📌 candidates + Admins → update (own) | Admin → update any
+router.put("/:id", protect, authorize(["candidate", "admin"]), async (req, res) => {
   try {
     const { id } = req.params;
     const resource = await Resource.findById(id);

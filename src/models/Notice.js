@@ -6,7 +6,7 @@ const noticeSchema = new mongoose.Schema(
     body: { type: String, required: true, trim: true },
     audience: {
       type: String,
-      enum: ["all", "students", "guests", "admins"],
+      enum: ["all", "candidates", "guests", "admins"],
       default: "all",
     },
     pinned: { type: Boolean, default: false },

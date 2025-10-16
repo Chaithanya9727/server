@@ -8,11 +8,9 @@ import fs from "fs";
 import AuditLog from "../models/AuditLog.js";
 
 const router = express.Router();
-const upload = multer({ dest: "uploads/" }); // temp storage
+const upload = multer({ dest: "uploads/" });
 
-// =====================================================
-// 📌 GET: Public → fetch resources with search + filter + pagination
-// =====================================================
+// 📌 GET: Public → fetch resources
 router.get("/", async (req, res) => {
   try {
     let { search = "", type = "all", page = 1, limit = 6 } = req.query;
@@ -20,19 +18,15 @@ router.get("/", async (req, res) => {
     limit = Number(limit);
 
     const query = {};
-
     if (search) {
       query.$or = [
         { title: { $regex: search, $options: "i" } },
         { description: { $regex: search, $options: "i" } },
       ];
     }
-    if (type !== "all") {
-      query.type = type;
-    }
+    if (type !== "all") query.type = type;
 
     const total = await Resource.countDocuments(query);
-
     const resources = await Resource.find(query)
       .populate("createdBy", "name email")
       .sort({ createdAt: -1 })
@@ -51,38 +45,28 @@ router.get("/", async (req, res) => {
   }
 });
 
-// =====================================================
-// 📌 POST: Upload file → Cloudinary (students/admins)
-// =====================================================
+// 📌 Upload file (candidate/Admin/SuperAdmin)
 router.post(
   "/upload",
   protect,
-  authorize(["student", "admin"]),
+  authorize(["candidate", "admin", "superadmin"]),
   upload.single("file"),
   async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ message: "No file uploaded" });
-      }
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
       const result = await cloudinary.uploader.upload(req.file.path, {
         folder: "onestop_resources",
         resource_type: "auto",
       });
 
-      // cleanup local temp file
       fs.unlinkSync(req.file.path);
 
-      // 🔏 log upload
-      try {
-        await AuditLog.create({
-          action: "UPLOAD_RESOURCE_FILE",
-          performedBy: req.user._id,
-          details: `Uploaded file "${req.file.originalname}" → ${result.secure_url}`,
-        });
-      } catch (e) {
-        console.error("AuditLog (UPLOAD_RESOURCE_FILE) failed:", e.message);
-      }
+      await AuditLog.create({
+        action: "UPLOAD_RESOURCE_FILE",
+        performedBy: req.user._id,
+        details: `Uploaded file "${req.file.originalname}" → ${result.secure_url}`,
+      });
 
       res.json({ url: result.secure_url });
     } catch (err) {
@@ -92,122 +76,92 @@ router.post(
   }
 );
 
-// =====================================================
-// 📌 POST: Create resource (students/admins)
-// =====================================================
-router.post(
-  "/",
-  protect,
-  authorize(["student", "admin"]),
-  upload.single("file"),
-  async (req, res) => {
-    try {
-      const { title, description, type, url } = req.body;
-      if (!title) return res.status(400).json({ message: "Title is required" });
+// 📌 Create resource (candidate/Admin/SuperAdmin)
+router.post("/", protect, authorize(["candidate", "admin", "superadmin"]), upload.single("file"), async (req, res) => {
+  try {
+    const { title, description, type, url } = req.body;
+    if (!title) return res.status(400).json({ message: "Title is required" });
 
-      let resourceUrl = url;
-
-      // If file is uploaded → Cloudinary
-      if (req.file) {
-        const result = await cloudinary.uploader.upload(req.file.path, {
-          folder: "onestop_resources",
-          resource_type: "auto",
-        });
-        resourceUrl = result.secure_url;
-        fs.unlinkSync(req.file.path);
-      }
-
-      const resource = await Resource.create({
-        title,
-        description,
-        type,
-        url: resourceUrl,
-        createdBy: req.user._id,
+    let resourceUrl = url;
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "onestop_resources",
+        resource_type: "auto",
       });
-
-      // 🔏 log creation
-      try {
-        await AuditLog.create({
-          action: "CREATE_RESOURCE",
-          performedBy: req.user._id,
-          details: `Created resource "${title}" (id: ${resource._id})`,
-        });
-      } catch (e) {
-        console.error("AuditLog (CREATE_RESOURCE) failed:", e.message);
-      }
-
-      res.status(201).json(resource);
-    } catch (err) {
-      console.error("Create resource error:", err);
-      res.status(500).json({ message: "Error creating resource" });
+      resourceUrl = result.secure_url;
+      fs.unlinkSync(req.file.path);
     }
+
+    const resource = await Resource.create({
+      title,
+      description,
+      type,
+      url: resourceUrl,
+      createdBy: req.user._id,
+    });
+
+    await AuditLog.create({
+      action: "CREATE_RESOURCE",
+      performedBy: req.user._id,
+      details: `Created resource "${title}" (id: ${resource._id})`,
+    });
+
+    res.status(201).json(resource);
+  } catch (err) {
+    console.error("Create resource error:", err);
+    res.status(500).json({ message: "Error creating resource" });
   }
-);
+});
 
-// =====================================================
-// 📌 PUT: Update resource (owner or admin)
-// =====================================================
-router.put(
-  "/:id",
-  protect,
-  authorize(["student", "admin"]),
-  upload.single("file"),
-  async (req, res) => {
-    try {
-      const resource = await Resource.findById(req.params.id);
-      if (!resource) return res.status(404).json({ message: "Resource not found" });
+// 📌 Update resource (Owner/Admin/SuperAdmin)
+router.put("/:id", protect, authorize(["candidate", "admin", "superadmin"]), upload.single("file"), async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) return res.status(404).json({ message: "Resource not found" });
 
-      if (
-        resource.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== "admin"
-      ) {
-        return res.status(403).json({ message: "Not authorized" });
-      }
-
-      const { title, description, type, url } = req.body;
-
-      const before = { ...resource._doc };
-
-      resource.title = title ?? resource.title;
-      resource.description = description ?? resource.description;
-      resource.type = type ?? resource.type;
-
-      if (req.file) {
-        const result = await cloudinary.uploader.upload(req.file.path, {
-          folder: "onestop_resources",
-          resource_type: "auto",
-        });
-        resource.url = result.secure_url;
-        fs.unlinkSync(req.file.path);
-      } else if (url) {
-        resource.url = url;
-      }
-
-      await resource.save();
-
-      // 🔏 log update
-      try {
-        await AuditLog.create({
-          action: "UPDATE_RESOURCE",
-          performedBy: req.user._id,
-          details: `Updated resource (id: ${resource._id}) — title: "${before.title}" → "${resource.title}"`,
-        });
-      } catch (e) {
-        console.error("AuditLog (UPDATE_RESOURCE) failed:", e.message);
-      }
-
-      res.json(resource);
-    } catch (err) {
-      console.error("Update resource error:", err);
-      res.status(500).json({ message: "Error updating resource" });
+    if (
+      resource.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== "admin" &&
+      req.user.role !== "superadmin"
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
     }
-  }
-);
 
-// =====================================================
-// 📌 DELETE: Delete resource (admin only)
-// =====================================================
-router.delete("/:id", protect, authorize(["admin"]), async (req, res) => {
+    const { title, description, type, url } = req.body;
+    const before = { ...resource._doc };
+
+    resource.title = title ?? resource.title;
+    resource.description = description ?? resource.description;
+    resource.type = type ?? resource.type;
+
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "onestop_resources",
+        resource_type: "auto",
+      });
+      resource.url = result.secure_url;
+      fs.unlinkSync(req.file.path);
+    } else if (url) {
+      resource.url = url;
+    }
+
+    await resource.save();
+
+    await AuditLog.create({
+      action: "UPDATE_RESOURCE",
+      performedBy: req.user._id,
+      details: `Updated resource (id: ${resource._id}) — title: "${before.title}" → "${resource.title}"`,
+    });
+
+    res.json(resource);
+  } catch (err) {
+    console.error("Update resource error:", err);
+    res.status(500).json({ message: "Error updating resource" });
+  }
+});
+
+// 📌 Delete resource (Admin + SuperAdmin)
+router.delete("/:id", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const resource = await Resource.findById(req.params.id);
     if (!resource) return res.status(404).json({ message: "Resource not found" });
@@ -220,22 +174,33 @@ router.delete("/:id", protect, authorize(["admin"]), async (req, res) => {
 
     await resource.deleteOne();
 
-    // 🔏 log deletion
-    try {
-      await AuditLog.create({
-        action: "DELETE_RESOURCE",
-        performedBy: req.user._id,
-        targetUser: snapshot.owner,
-        details: `Deleted resource "${snapshot.title}" (id: ${resource._id})`,
-      });
-    } catch (e) {
-      console.error("AuditLog (DELETE_RESOURCE) failed:", e.message);
-    }
+    await AuditLog.create({
+      action: "DELETE_RESOURCE",
+      performedBy: req.user._id,
+      targetUser: snapshot.owner,
+      details: `Deleted resource "${snapshot.title}" (id: ${resource._id})`,
+    });
 
     res.json({ message: "Resource deleted" });
   } catch (err) {
     console.error("Delete resource error:", err);
     res.status(500).json({ message: "Error deleting resource" });
+  }
+});
+
+// 📌 Bulk delete all resources (SuperAdmin only)
+router.delete("/bulk/all", protect, authorize(["superadmin"]), async (req, res) => {
+  try {
+    const count = await Resource.countDocuments();
+    await Resource.deleteMany({});
+    await AuditLog.create({
+      action: "DELETE_ALL_RESOURCES",
+      performedBy: req.user._id,
+      details: `SuperAdmin deleted all ${count} resources`,
+    });
+    res.json({ message: `Deleted all ${count} resources ✅` });
+  } catch (err) {
+    res.status(500).json({ message: "Error bulk deleting resources" });
   }
 });
 

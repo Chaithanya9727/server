@@ -4,12 +4,11 @@ import User from "./models/User.js";
 import Conversation from "./models/Conversation.js";
 import Message from "./models/Message.js";
 
-const activeUsers = new Map();
+const activeUsers = new Map(); // userId -> socketId
 
 export default function socketServer(httpServer) {
-  // ✅ Allow both Netlify (production) and localhost (dev)
   const allowedOrigins = [
-    "https://onestop-frontend.netlify.app",
+    // "https://onestop-frontend.netlify.app",
     "http://localhost:5173",
   ];
 
@@ -17,11 +16,13 @@ export default function socketServer(httpServer) {
     cors: {
       origin: allowedOrigins,
       credentials: true,
-      methods: ["GET", "POST"],
+      methods: ["GET", "POST", "PUT", "DELETE"],
     },
   });
 
-  // ✅ Authenticate user with JWT
+  /**
+   * ✅ Authenticate via JWT before connection
+   */
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
@@ -38,21 +39,24 @@ export default function socketServer(httpServer) {
     }
   });
 
-  // ✅ When a user connects
+  /**
+   * ✅ On connection
+   */
   io.on("connection", (socket) => {
     const userId = socket.user._id.toString();
     activeUsers.set(userId, socket.id);
-    console.log(`✅ User connected: ${socket.user.name}`);
 
+    console.log(`✅ ${socket.user.name} connected (${socket.user.role})`);
     io.emit("presence:update", { userId, online: true });
 
-    /**
-     * ✅ Send Message
-     */
+    // =========================
+    // 💬 MESSAGE HANDLING
+    // =========================
+
     socket.on("message:send", async ({ conversationId, to, body }, cb) => {
       try {
         if (!conversationId || !to)
-          return cb?.({ ok: false, error: "Invalid recipient or conversation" });
+          return cb?.({ ok: false, error: "Missing recipient or conversation" });
 
         const msg = await Message.create({
           conversation: conversationId,
@@ -67,16 +71,14 @@ export default function socketServer(httpServer) {
           lastMessageAt: new Date(),
         });
 
-        // ✅ Clean message object with string IDs (avoid frontend alignment issues)
         const populated = await Message.findById(msg._id)
-          .populate("from to", "name email avatar")
+          .populate("from to", "name email avatar role")
           .lean();
 
-        // Force IDs to be plain strings for comparison in frontend
         populated.from = populated.from._id.toString();
         populated.to = populated.to._id.toString();
 
-        // ✅ Emit message to receiver (if online)
+        // 🎯 Emit to receiver
         const targetSocket = activeUsers.get(to);
         if (targetSocket) {
           io.to(targetSocket).emit("message:new", { message: populated });
@@ -84,17 +86,33 @@ export default function socketServer(httpServer) {
           await Message.findByIdAndUpdate(msg._id, { status: "delivered" });
         }
 
-        // ✅ Return message to sender
+        // 🎯 Return to sender
         cb?.({ ok: true, message: populated });
+
+        // 📢 Broadcast a “new message alert” to all online admins/superadmins
+        const admins = await User.find({
+          role: { $in: ["admin", "superadmin"] },
+        }).select("_id");
+
+        for (const admin of admins) {
+          const socketId = activeUsers.get(admin._id.toString());
+          if (socketId && admin._id.toString() !== userId) {
+            io.to(socketId).emit("admin:message-alert", {
+              from: populated.from,
+              preview: body.slice(0, 60),
+              timestamp: new Date(),
+            });
+          }
+        }
       } catch (err) {
         console.error("Send error:", err);
         cb?.({ ok: false, error: "Send failed" });
       }
     });
 
-    /**
-     * ✅ Delete Message
-     */
+    // =========================
+    // 🧹 DELETE MESSAGE
+    // =========================
     socket.on("message:delete", async ({ messageId, mode }, cb) => {
       try {
         const msg = await Message.findById(messageId);
@@ -140,9 +158,9 @@ export default function socketServer(httpServer) {
       }
     });
 
-    /**
-     * ✅ Typing Indicator
-     */
+    // =========================
+    // ⌨️ TYPING INDICATOR
+    // =========================
     socket.on("typing", ({ to, conversationId, typing }) => {
       const targetSocket = activeUsers.get(to);
       if (targetSocket) {
@@ -154,9 +172,9 @@ export default function socketServer(httpServer) {
       }
     });
 
-    /**
-     * ✅ Message Status Update
-     */
+    // =========================
+    // 📋 MESSAGE STATUS
+    // =========================
     socket.on("message:mark", async ({ messageId, status }) => {
       try {
         const msg = await Message.findById(messageId);
@@ -177,13 +195,13 @@ export default function socketServer(httpServer) {
       }
     });
 
-    /**
-     * ✅ Disconnect
-     */
+    // =========================
+    // 🔌 DISCONNECT
+    // =========================
     socket.on("disconnect", () => {
       activeUsers.delete(userId);
       io.emit("presence:update", { userId, online: false });
-      console.log(`❌ User disconnected: ${socket.user.name}`);
+      console.log(`❌ ${socket.user.name} disconnected`);
     });
   });
 

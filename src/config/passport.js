@@ -8,7 +8,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 /* ============================================================
-   🌐 OAuth Config (Auto Switch for Local / Production)
+   🌐 ENVIRONMENT SWITCH
    ============================================================ */
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -17,7 +17,7 @@ const CLIENT_URL = isProduction
   : "http://localhost:5173";
 
 const SERVER_URL = isProduction
-  ? "https://onestop-backend.onrender.com"
+  ? "https://server-hv9f.onrender.com"
   : "http://localhost:5000";
 
 /* ============================================================
@@ -32,7 +32,7 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails?.[0]?.value;
+        const email = profile.emails?.[0]?.value?.toLowerCase();
         if (!email) return done(new Error("Google account missing email."));
 
         let user = await User.findOne({ email });
@@ -41,11 +41,11 @@ passport.use(
             name: profile.displayName,
             email,
             password: Math.random().toString(36).slice(-8),
-            role: "student",
-            googleId: profile.id,
+            role: "candidate",
           });
         }
 
+        console.log("✅ Google login success:", email);
         return done(null, user);
       } catch (err) {
         console.error("Google OAuth Error:", err);
@@ -68,9 +68,9 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        let email =
-          profile.emails?.[0]?.value ||
-          `${profile.username}@githubuser.com`; // fallback for private email
+        const email =
+          profile.emails?.[0]?.value?.toLowerCase() ||
+          `${profile.username}@githubuser.com`; // fallback if private email
 
         let user = await User.findOne({ email });
         if (!user) {
@@ -78,11 +78,11 @@ passport.use(
             name: profile.displayName || profile.username,
             email,
             password: Math.random().toString(36).slice(-8),
-            role: "student",
-            githubId: profile.id,
+            role: "candidate",
           });
         }
 
+        console.log("✅ GitHub login success:", profile.username);
         return done(null, user);
       } catch (err) {
         console.error("GitHub OAuth Error:", err);

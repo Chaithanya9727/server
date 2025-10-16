@@ -27,7 +27,7 @@ export const deleteUser = async (req, res) => {
 // @access Admin
 export const updateUserRole = async (req, res) => {
   const { role } = req.body
-  if (!["admin", "student", "guest"].includes(role)) {
+  if (!["admin", "candidate", "guest"].includes(role)) {
     return res.status(400).json({ message: "Invalid role" })
   }
 

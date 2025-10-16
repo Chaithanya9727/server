@@ -1,6 +1,7 @@
 import express from "express";
 import Notice from "../models/Notice.js";
-import { protect, authorize } from "../middleware/auth.js";
+import { protect } from "../middleware/auth.js";
+import { authorize } from "../middleware/authorize.js";
 import AuditLog from "../models/AuditLog.js";
 
 const router = express.Router();
@@ -53,8 +54,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 📌 Admin → create notice
-router.post("/", protect, authorize("admin"), async (req, res) => {
+// 📌 Admin & SuperAdmin → create notice
+router.post("/", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const { title, body, audience, pinned, attachment } = req.body;
     if (!title || !body) {
@@ -70,7 +71,6 @@ router.post("/", protect, authorize("admin"), async (req, res) => {
       createdBy: req.user._id,
     });
 
-    // 🔏 Audit: CREATE_NOTICE
     await AuditLog.create({
       action: "CREATE_NOTICE",
       targetUser: req.user._id,
@@ -85,8 +85,8 @@ router.post("/", protect, authorize("admin"), async (req, res) => {
   }
 });
 
-// 📌 Admin → update notice
-router.put("/:id", protect, authorize("admin"), async (req, res) => {
+// 📌 Admin & SuperAdmin → update notice
+router.put("/:id", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const { id } = req.params;
     const notice = await Notice.findById(id);
@@ -100,7 +100,6 @@ router.put("/:id", protect, authorize("admin"), async (req, res) => {
       attachment: notice.attachment || null,
     };
 
-    // apply changes
     notice.title = req.body.title ?? notice.title;
     notice.body = req.body.body ?? notice.body;
     notice.audience = req.body.audience ?? notice.audience;
@@ -110,7 +109,6 @@ router.put("/:id", protect, authorize("admin"), async (req, res) => {
 
     await notice.save();
 
-    // audit: diff check
     const after = {
       title: notice.title,
       body: notice.body,
@@ -153,8 +151,8 @@ router.put("/:id", protect, authorize("admin"), async (req, res) => {
   }
 });
 
-// 📌 Admin → delete notice
-router.delete("/:id", protect, authorize("admin"), async (req, res) => {
+// 📌 Admin & SuperAdmin → delete notice
+router.delete("/:id", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const notice = await Notice.findById(req.params.id);
     if (!notice) return res.status(404).json({ message: "Notice not found" });
@@ -163,7 +161,6 @@ router.delete("/:id", protect, authorize("admin"), async (req, res) => {
 
     await notice.deleteOne();
 
-    // 🔏 Audit: DELETE_NOTICE
     await AuditLog.create({
       action: "DELETE_NOTICE",
       targetUser: req.user._id,
@@ -175,6 +172,23 @@ router.delete("/:id", protect, authorize("admin"), async (req, res) => {
   } catch (err) {
     console.error("Delete notice error:", err);
     res.status(500).json({ message: "Error deleting notice" });
+  }
+});
+
+// 📌 SuperAdmin → bulk delete all notices
+router.delete("/bulk/all", protect, authorize(["superadmin"]), async (req, res) => {
+  try {
+    const count = await Notice.countDocuments();
+    await Notice.deleteMany({});
+    await AuditLog.create({
+      action: "DELETE_ALL_NOTICES",
+      performedBy: req.user._id,
+      details: `SuperAdmin deleted all ${count} notices`,
+    });
+    res.json({ message: `Deleted all ${count} notices ✅` });
+  } catch (err) {
+    console.error("Bulk delete notices error:", err);
+    res.status(500).json({ message: "Error bulk deleting notices" });
   }
 });
 

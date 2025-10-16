@@ -1,60 +1,110 @@
-// routes/auth.js
 import express from "express";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import passport from "passport";
-
 import User from "../models/User.js";
 import OTP from "../models/OTP.js";
+import AuditLog from "../models/AuditLog.js";
 import { protect } from "../middleware/auth.js";
+import { authorize } from "../middleware/authorize.js";
 import { sendEmail } from "../utils/sendEmail.js";
 
 const router = express.Router();
 
-// JWT generator
+// 🔑 JWT Generator
 const generateToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-// ✅ Render-safe IPv6 compatible rate limiter
+// 🚫 Rate limit for OTP requests
 const otpLimiter = rateLimit({
-  windowMs: 30 * 1000, // 30s cooldown
+  windowMs: 30 * 1000,
   max: 1,
-  message: { message: "Please wait 30 seconds before requesting a new OTP." },
-  keyGenerator: (req) => req.body?.email || ipKeyGenerator(req),
+  message: { message: "Please wait 30 seconds before requesting another OTP." },
+  keyGenerator: (req) => req.body?.email || req.ip,
 });
 
-// ================= REGISTER =================
-router.post("/register", async (req, res) => {
+// ===================== REGISTER candidate =====================
+router.post("/register-candidate", async (req, res) => {
   try {
-    const { name, email, password, role, mobile } = req.body;
+    const { name, email, password, mobile } = req.body;
     const exists = await User.findOne({ email: email.toLowerCase() });
     if (exists) return res.status(400).json({ message: "User already exists" });
 
-    const user = await User.create({ name, email, password, role, mobile });
+    // Ensure email is verified
+    const verifiedOtp = await OTP.findOne({
+      email: email.toLowerCase(),
+      purpose: "email-verification",
+      verified: true,
+    });
+    if (!verifiedOtp)
+      return res
+        .status(400)
+        .json({ message: "Please verify your email before registering." });
+
+    const user = await User.create({
+      name,
+      email,
+      password,
+      mobile,
+      role: "candidate",
+    });
+
+    await OTP.deleteMany({ email: email.toLowerCase(), purpose: "email-verification" });
 
     res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
+      message: "candidate registered successfully ✅",
       token: generateToken(user._id, user.role),
     });
   } catch (err) {
-    console.error("Register error:", err);
+    console.error("Register candidate error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// ================= LOGIN =================
+// ===================== CREATE ADMIN (SuperAdmin only) =====================
+router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res) => {
+  try {
+    const { name, email, password, mobile } = req.body;
+    const exists = await User.findOne({ email: email.toLowerCase() });
+    if (exists) return res.status(400).json({ message: "Admin already exists" });
+
+    const admin = await User.create({
+      name,
+      email,
+      password,
+      mobile,
+      role: "admin",
+    });
+
+    await AuditLog.create({
+      action: "CREATE_ADMIN",
+      targetUser: admin._id,
+      performedBy: req.user._id,
+      details: `SuperAdmin created Admin (${admin.email})`,
+    });
+
+    await sendEmail(
+      admin.email,
+      "Admin Account Created - OneStop Hub",
+      `Hello ${admin.name},\n\nYou have been added as an Admin.\nYour password: ${password}\nPlease log in and change it immediately.\n\n— OneStop Team`
+    );
+
+    res.status(201).json({ message: "Admin created successfully ✅" });
+  } catch (err) {
+    console.error("Create admin error:", err);
+    res.status(500).json({ message: "Error creating admin" });
+  }
+});
+
+// ===================== LOGIN =====================
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-    if (!user) return res.status(400).json({ message: "Invalid email or password" });
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
     const isMatch = await user.matchPassword(password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid email or password" });
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
     res.json({
       _id: user._id,
@@ -69,71 +119,58 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// ================= CURRENT USER =================
+// ===================== ME =====================
 router.get("/me", protect, async (req, res) => {
   try {
     const me = await User.findById(req.user._id).select("-password");
-    if (!me) return res.status(404).json({ message: "User not found" });
     res.json(me);
-  } catch (err) {
-    console.error("Fetch user error:", err);
+  } catch {
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// ================= SEND OTP (Email Only) =================
+// ===================== PASSWORD RESET OTP =====================
 router.post("/send-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email required" });
-
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await OTP.create({
-      email: user.email,
-      otp: otpCode,
+      email,
+      otp,
       purpose: "password-reset",
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    const emailSent = await sendEmail(
+    await sendEmail(
       user.email,
-      "OneStop Password Reset Code",
-      `Hello ${user.name || "User"},\n\nYour OneStop password reset OTP is: ${otpCode}\nThis code is valid for 5 minutes.\n\n— OneStop Team`
+      "OneStop Password Reset",
+      `Your password reset OTP is ${otp}\nValid for 5 minutes.`
     );
 
-    if (!emailSent)
-      return res.status(500).json({ message: "Failed to send OTP email" });
-
-    res.json({ message: "OTP sent to your registered email ✅" });
+    res.json({ message: "OTP sent to your email ✅" });
   } catch (err) {
     console.error("send-otp error:", err);
     res.status(500).json({ message: "Failed to send OTP" });
   }
 });
 
-// ================= VERIFY OTP =================
 router.post("/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
-    const found = await OTP.findOne({ email, otp, purpose: "password-reset" });
-
-    if (!found || found.expiresAt < new Date()) {
+    const record = await OTP.findOne({ email, otp, purpose: "password-reset" });
+    if (!record || record.expiresAt < new Date())
       return res.status(400).json({ message: "Invalid or expired OTP" });
-    }
 
     await OTP.deleteMany({ email, purpose: "password-reset" });
     res.json({ success: true, message: "OTP verified ✅" });
-  } catch (err) {
-    console.error("verify-otp error:", err);
-    res.status(500).json({ message: "OTP verification failed" });
+  } catch {
+    res.status(500).json({ message: "Error verifying OTP" });
   }
 });
 
-// ================= RESET PASSWORD =================
 router.put("/reset-password", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -142,43 +179,98 @@ router.put("/reset-password", async (req, res) => {
 
     user.password = password;
     await user.save();
-
     await OTP.deleteMany({ email, purpose: "password-reset" });
 
-    res.json({ message: "Password reset successful ✅" });
-  } catch (err) {
-    console.error("reset-password error:", err);
+    res.json({ message: "Password reset successfully ✅" });
+  } catch {
     res.status(500).json({ message: "Error resetting password" });
   }
 });
 
-// ================= FORGOT PASSWORD (Reset Link) =================
-router.post("/forgot-password", async (req, res) => {
+// ===================== EMAIL VERIFICATION OTP =====================
+router.post("/send-verification-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const exists = await User.findOne({ email: email.toLowerCase() });
+    if (exists) return res.status(400).json({ message: "User already registered" });
 
-    const resetToken = crypto.randomBytes(20).toString("hex");
-    user.resetPasswordToken = crypto.createHash("sha256").update(resetToken).digest("hex");
-    user.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
-    await user.save({ validateBeforeSave: false });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    await OTP.create({
+      email: email.toLowerCase(),
+      otp,
+      purpose: "email-verification",
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      verified: false,
+    });
 
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
-    const ok = await sendEmail(
-      user.email,
-      "Password Reset Link",
-      `Reset your password at this link:\n${resetUrl}`,
-      `<p>Reset your password:</p><p><a href="${resetUrl}">${resetUrl}</a></p>`
+    await sendEmail(
+      email,
+      "Verify Your Email - OneStop Hub",
+      `Your OneStop Hub verification code is: ${otp}\nValid for 5 minutes.`
     );
 
-    if (!ok) return res.status(500).json({ message: "Email could not be sent" });
-
-    res.json({ message: "Reset link sent to email ✅" });
-  } catch (err) {
-    console.error("forgot-password error:", err);
-    res.status(500).json({ message: "Email could not be sent" });
+    res.json({ message: "Verification OTP sent ✅" });
+  } catch {
+    res.status(500).json({ message: "Error sending verification OTP" });
   }
 });
+
+router.post("/verify-verification-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const record = await OTP.findOne({
+      email: email.toLowerCase(),
+      otp,
+      purpose: "email-verification",
+    });
+    if (!record || record.expiresAt < new Date())
+      return res.status(400).json({ message: "Invalid or expired OTP" });
+
+    record.verified = true;
+    await record.save();
+    res.json({ success: true, message: "Email verified successfully ✅" });
+  } catch {
+    res.status(500).json({ message: "Error verifying email" });
+  }
+});
+
+// ===================== OAUTH: GOOGLE & GITHUB =====================
+function redirectWithToken(res, user) {
+  const token = generateToken(user._id, user.role);
+  const redirectUrl = `${process.env.CLIENT_URL}/oauth-success?token=${token}`;
+  return res.redirect(redirectUrl);
+}
+
+router.get("/google", passport.authenticate("google", { scope: ["profile", "email"], session: false }));
+
+router.get(
+  "/google/callback",
+  passport.authenticate("google", { session: false, failureRedirect: `${process.env.CLIENT_URL}/login?error=google_oauth_failed` }),
+  async (req, res) => {
+    await AuditLog.create({
+      action: "OAUTH_LOGIN",
+      targetUser: req.user._id,
+      performedBy: req.user._id,
+      details: `User logged in via Google (${req.user.email})`,
+    });
+    redirectWithToken(res, req.user);
+  }
+);
+
+router.get("/github", passport.authenticate("github", { scope: ["user:email"], session: false }));
+
+router.get(
+  "/github/callback",
+  passport.authenticate("github", { session: false, failureRedirect: `${process.env.CLIENT_URL}/login?error=github_oauth_failed` }),
+  async (req, res) => {
+    await AuditLog.create({
+      action: "OAUTH_LOGIN",
+      targetUser: req.user._id,
+      performedBy: req.user._id,
+      details: `User logged in via GitHub (${req.user.email})`,
+    });
+    redirectWithToken(res, req.user);
+  }
+);
 
 export default router;
