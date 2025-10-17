@@ -22,12 +22,13 @@ router.get("/me", protect, async (req, res) => {
     const user = await User.findById(req.user._id).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
-  } catch {
+  } catch (err) {
+    console.error("Fetch profile error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// ✅ Update own info
+// ✅ Update own profile info
 router.put("/me", protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -36,18 +37,13 @@ router.put("/me", protect, async (req, res) => {
     user.name = req.body.name || user.name;
     user.email = req.body.email || user.email;
     user.mobile = req.body.mobile || user.mobile;
+    if (req.body.mentorProfile) user.mentorProfile = req.body.mentorProfile;
 
     const updated = await user.save();
-    res.json({
-      _id: updated._id,
-      name: updated.name,
-      email: updated.email,
-      mobile: updated.mobile,
-      role: updated.role,
-      avatar: updated.avatar,
-    });
-  } catch {
-    res.status(500).json({ message: "Update failed" });
+    res.json(updated);
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ message: "Error updating profile" });
   }
 });
 
@@ -55,22 +51,31 @@ router.put("/me", protect, async (req, res) => {
 router.put("/me/password", protect, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).select("+password");
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const match = await bcrypt.compare(oldPassword, user.password);
-    if (!match) return res.status(401).json({ message: "Old password wrong" });
+    if (!match)
+      return res.status(401).json({ message: "Old password incorrect" });
 
     user.password = newPassword;
     await user.save();
 
+    await AuditLog.create({
+      action: "USER_CHANGE_PASSWORD",
+      performedBy: req.user._id,
+      targetUser: req.user._id,
+      details: `${user.email} changed their password.`,
+    });
+
     res.json({ message: "Password updated ✅" });
-  } catch {
+  } catch (err) {
+    console.error("Password change error:", err);
     res.status(500).json({ message: "Error updating password" });
   }
 });
 
-// ✅ Avatar upload
+// ✅ Upload avatar
 router.put("/me/avatar", protect, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
@@ -97,7 +102,7 @@ router.put("/me/avatar", protect, upload.single("file"), async (req, res) => {
    👑 USER MANAGEMENT (Admin + SuperAdmin)
 ===================================================== */
 
-// ✅ Get users (Admin + SuperAdmin)
+// ✅ Get all users
 router.get("/", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const { search = "" } = req.query;
@@ -109,7 +114,6 @@ router.get("/", protect, authorize(["admin", "superadmin"]), async (req, res) =>
           ],
         }
       : {};
-
     const users = await User.find(query).select("-password").limit(100);
     res.json(users);
   } catch (err) {
@@ -118,17 +122,15 @@ router.get("/", protect, authorize(["admin", "superadmin"]), async (req, res) =>
   }
 });
 
-// ✅ Admin + SuperAdmin → Create Admin (Temporary for development)
+// ✅ Create Admin
 router.post("/create-admin", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
-    console.log("👉 Current user role:", req.user.role); // Debugging line
-
     const { name, email, password, mobile } = req.body;
     if (!name || !email || !password)
-      return res.status(400).json({ message: "All fields required" });
+      return res.status(400).json({ message: "All fields are required" });
 
     const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(400).json({ message: "Email exists" });
+    if (exists) return res.status(400).json({ message: "Email already exists" });
 
     const newAdmin = await User.create({
       name,
@@ -142,7 +144,6 @@ router.post("/create-admin", protect, authorize(["admin", "superadmin"]), async 
       action: "CREATE_ADMIN",
       performedBy: req.user._id,
       targetUser: newAdmin._id,
-      targetUserSnapshot: { name: newAdmin.name, email: newAdmin.email },
       details: `${req.user.role} created admin: ${newAdmin.email}`,
     });
 
@@ -174,7 +175,6 @@ router.put("/:id/role", protect, authorize(["superadmin"]), async (req, res) => 
       action: "CHANGE_ROLE",
       performedBy: req.user._id,
       targetUser: user._id,
-      targetUserSnapshot: { name: user.name, email: user.email },
       details: `Role changed ${oldRole} → ${role}`,
     });
 
@@ -185,53 +185,164 @@ router.put("/:id/role", protect, authorize(["superadmin"]), async (req, res) => 
   }
 });
 
-// ✅ Reset password (Admin + SuperAdmin)
-router.put("/:id/reset-password", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+/* =====================================================
+   🆕 RESET PASSWORD BY ADMIN (NEWLY ADDED)
+===================================================== */
+router.put(
+  "/:id/reset-password",
+  protect,
+  authorize(["admin", "superadmin"]),
+  async (req, res) => {
+    try {
+      const { newPassword } = req.body;
+      const user = await User.findById(req.params.id);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      user.password = newPassword;
+      await user.save();
+
+      await AuditLog.create({
+        action: "ADMIN_RESET_PASSWORD",
+        performedBy: req.user._id,
+        targetUser: user._id,
+        targetUserSnapshot: { name: user.name, email: user.email, role: user.role },
+        details: `${req.user.role} reset password for ${user.email}`,
+      });
+
+      await sendEmail(
+        user.email,
+        "🔒 Your Password Has Been Reset",
+        `Hello ${user.name},\n\nYour account password was reset by an administrator.\nPlease log in using your new password.\n\nIf this wasn’t you, contact support immediately.\n\n— OneStop Hub`
+      );
+
+      res.json({ message: "Password reset successfully ✅" });
+    } catch (err) {
+      console.error("Reset password error:", err);
+      res.status(500).json({ message: "Error resetting password" });
+    }
+  }
+);
+
+/* =====================================================
+   🧑‍🏫 MENTOR MANAGEMENT (Admin + SuperAdmin)
+===================================================== */
+
+// ✅ Get pending mentors for approval
+router.get("/mentors/pending", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
-    const { newPassword } = req.body;
-    if (!newPassword) return res.status(400).json({ message: "Password required" });
-
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    user.password = newPassword;
-    await user.save();
-
-    await AuditLog.create({
-      action: "RESET_PASSWORD",
-      performedBy: req.user._id,
-      targetUser: user._id,
-      details: `Password reset for ${user.email}`,
-    });
-
-    await sendEmail(
-      user.email,
-      "🔐 OneStop Password Reset",
-      `Hello ${user.name},\nYour password was reset by ${req.user.role}.\nNew Password: ${newPassword}`
-    );
-
-    res.json({ message: "Password reset ✅" });
+    const mentors = await User.find({
+      mentorRequested: true,
+      mentorApproved: false,
+    }).select("-password");
+    res.json(mentors);
   } catch (err) {
-    console.error("Reset password error:", err);
-    res.status(500).json({ message: "Error resetting password" });
+    console.error("Fetch pending mentors error:", err);
+    res.status(500).json({ message: "Error fetching pending mentors" });
   }
 });
 
-// ✅ Delete user (SuperAdmin only)
+// ✅ Approve mentor profile
+router.put("/mentors/:id/approve", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+  try {
+    const mentor = await User.findById(req.params.id);
+    if (!mentor) return res.status(404).json({ message: "Mentor not found" });
+
+    mentor.mentorApproved = true;
+    mentor.mentorRequested = false;
+    mentor.role = "mentor";
+    await mentor.save();
+
+    await AuditLog.create({
+      action: "APPROVE_MENTOR",
+      performedBy: req.user._id,
+      targetUser: mentor._id,
+      details: `${req.user.role} approved mentor: ${mentor.email}`,
+    });
+
+    await sendEmail(
+      mentor.email,
+      "✅ Mentor Approved - OneStop Hub",
+      `Hi ${mentor.name},\n\nYour mentor profile has been approved by ${req.user.role}.`
+    );
+
+    res.json({ message: "Mentor approved successfully ✅" });
+  } catch (err) {
+    console.error("Approve mentor error:", err);
+    res.status(500).json({ message: "Error approving mentor" });
+  }
+});
+
+// ✅ Reject mentor profile
+router.put("/mentors/:id/reject", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+  try {
+    const mentor = await User.findById(req.params.id);
+    if (!mentor) return res.status(404).json({ message: "Mentor not found" });
+
+    mentor.mentorRequested = false;
+    mentor.mentorProfile = {};
+    await mentor.save();
+
+    await AuditLog.create({
+      action: "REJECT_MENTOR",
+      performedBy: req.user._id,
+      targetUser: mentor._id,
+      details: `Rejected mentor: ${mentor.email}`,
+    });
+
+    res.json({ message: "Mentor application rejected ❌" });
+  } catch (err) {
+    console.error("Reject mentor error:", err);
+    res.status(500).json({ message: "Error rejecting mentor" });
+  }
+});
+
+// ✅ Assign mentor to candidate
+router.put("/assign-mentor/:candidateId", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+  try {
+    const { mentorId } = req.body;
+    const candidate = await User.findById(req.params.candidateId);
+    const mentor = await User.findById(mentorId);
+
+    if (!candidate || !mentor)
+      return res.status(404).json({ message: "Candidate or Mentor not found" });
+
+    candidate.mentorAssigned = mentor._id;
+    mentor.mentees.push(candidate._id);
+
+    await candidate.save();
+    await mentor.save();
+
+    await AuditLog.create({
+      action: "ASSIGN_MENTOR",
+      performedBy: req.user._id,
+      targetUser: candidate._id,
+      details: `Mentor ${mentor.email} assigned to ${candidate.email}`,
+    });
+
+    res.json({ message: "Mentor assigned successfully ✅" });
+  } catch (err) {
+    console.error("Assign mentor error:", err);
+    res.status(500).json({ message: "Error assigning mentor" });
+  }
+});
+
+/* =====================================================
+   🗑️ Delete User (SuperAdmin Only)
+===================================================== */
 router.delete("/:id", protect, authorize(["superadmin"]), async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    await user.deleteOne();
+
     await AuditLog.create({
       action: "DELETE_USER",
       performedBy: req.user._id,
       targetUser: user._id,
-      targetUserSnapshot: { name: user.name, email: user.email },
       details: `SuperAdmin deleted user: ${user.email}`,
     });
 
-    await user.deleteOne();
     res.json({ message: "User deleted ❌" });
   } catch (err) {
     console.error("Delete user error:", err);
@@ -240,58 +351,20 @@ router.delete("/:id", protect, authorize(["superadmin"]), async (req, res) => {
 });
 
 /* =====================================================
-   🧾 AUDIT LOG MANAGEMENT
+   📜 AUDIT LOGS (Admin + SuperAdmin)
 ===================================================== */
-
-// ✅ View audit logs (Admin + SuperAdmin)
 router.get("/audit", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
-    let { page = 1, limit = 10, search = "", action = "all" } = req.query;
-    page = Number(page);
-    limit = Number(limit);
-
-    const query = {};
-    if (action !== "all") query.action = action;
-    if (search)
-      query.$or = [
-        { action: { $regex: search, $options: "i" } },
-        { details: { $regex: search, $options: "i" } },
-      ];
-
-    const total = await AuditLog.countDocuments(query);
-    const logs = await AuditLog.find(query)
+    const logs = await AuditLog.find()
       .populate("performedBy", "name email role")
-      .populate("targetUser", "name email")
+      .populate("targetUser", "name email role")
       .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(100);
 
-    res.json({ logs, total, page, pages: Math.ceil(total / limit) });
+    res.json({ logs });
   } catch (err) {
-    console.error("Fetch logs error:", err);
+    console.error("Fetch audit logs error:", err);
     res.status(500).json({ message: "Error fetching audit logs" });
-  }
-});
-
-// ✅ Bulk delete logs (SuperAdmin only)
-router.delete("/audit/bulk", protect, authorize(["superadmin"]), async (req, res) => {
-  try {
-    const { ids } = req.body;
-    if (!ids || !Array.isArray(ids))
-      return res.status(400).json({ message: "Invalid log IDs" });
-
-    await AuditLog.deleteMany({ _id: { $in: ids } });
-
-    await AuditLog.create({
-      action: "DELETE_LOGS",
-      performedBy: req.user._id,
-      details: `Deleted ${ids.length} logs in bulk`,
-    });
-
-    res.json({ message: `${ids.length} logs deleted ✅` });
-  } catch (err) {
-    console.error("Delete logs error:", err);
-    res.status(500).json({ message: "Error deleting logs" });
   }
 });
 

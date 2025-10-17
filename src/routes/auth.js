@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import passport from "passport";
+import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import OTP from "../models/OTP.js";
 import AuditLog from "../models/AuditLog.js";
@@ -11,11 +12,15 @@ import { sendEmail } from "../utils/sendEmail.js";
 
 const router = express.Router();
 
-// 🔑 JWT Generator
+/* =====================================================
+ 🔑 JWT Generator
+===================================================== */
 const generateToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-// 🚫 Rate limit for OTP requests
+/* =====================================================
+ 🚫 Rate Limiters
+===================================================== */
 const otpLimiter = rateLimit({
   windowMs: 30 * 1000,
   max: 1,
@@ -23,19 +28,22 @@ const otpLimiter = rateLimit({
   keyGenerator: (req) => req.body?.email || req.ip,
 });
 
-// ===================== REGISTER candidate =====================
+/* =====================================================
+ 🧑‍🎓 REGISTER - Candidate
+===================================================== */
 router.post("/register-candidate", async (req, res) => {
   try {
     const { name, email, password, mobile } = req.body;
     const exists = await User.findOne({ email: email.toLowerCase() });
     if (exists) return res.status(400).json({ message: "User already exists" });
 
-    // Ensure email is verified
+    // Verify email OTP
     const verifiedOtp = await OTP.findOne({
       email: email.toLowerCase(),
       purpose: "email-verification",
       verified: true,
     });
+
     if (!verifiedOtp)
       return res
         .status(400)
@@ -47,12 +55,13 @@ router.post("/register-candidate", async (req, res) => {
       password,
       mobile,
       role: "candidate",
+      allowedRoles: ["candidate"], // ✅ initialize allowed roles
     });
 
     await OTP.deleteMany({ email: email.toLowerCase(), purpose: "email-verification" });
 
     res.status(201).json({
-      message: "candidate registered successfully ✅",
+      message: "Candidate registered successfully ✅",
       token: generateToken(user._id, user.role),
     });
   } catch (err) {
@@ -61,7 +70,9 @@ router.post("/register-candidate", async (req, res) => {
   }
 });
 
-// ===================== CREATE ADMIN (SuperAdmin only) =====================
+/* =====================================================
+ 👑 CREATE ADMIN (SuperAdmin Only)
+===================================================== */
 router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res) => {
   try {
     const { name, email, password, mobile } = req.body;
@@ -74,6 +85,7 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
       password,
       mobile,
       role: "admin",
+      allowedRoles: ["admin"], // ✅ add allowedRoles
     });
 
     await AuditLog.create({
@@ -96,22 +108,62 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
   }
 });
 
-// ===================== LOGIN =====================
+/* =====================================================
+ 🔐 LOGIN (With Multi-Role Validation)
+===================================================== */
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
+    const { email, password, selectedRole } = req.body;
 
-    const isMatch = await user.matchPassword(password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+    if (!email || !password || !selectedRole) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    // ✅ Normalize roles for comparison
+    const normalizedSelectedRole = selectedRole.toLowerCase();
+    const normalizedAllowedRoles = (user.allowedRoles || []).map((r) => r.toLowerCase());
+
+    // ✅ Validate if selected role is authorized
+    if (
+      user.role.toLowerCase() !== normalizedSelectedRole &&
+      !normalizedAllowedRoles.includes(normalizedSelectedRole)
+    ) {
+      return res.status(403).json({
+        message: `You are registered as a ${user.role}. Please select '${user.role}' or another authorized role to log in.`,
+        allowedRoles: user.allowedRoles,
+      });
+    }
+
+    // ✅ Verify password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    // ✅ Generate JWT Token
+    const token = generateToken(user._id, normalizedSelectedRole);
+
+    // 🧾 Log successful login
+    await AuditLog.create({
+      action: "LOGIN",
+      performedBy: user._id,
+      targetUser: user._id,
+      details: `User logged in as ${normalizedSelectedRole} (${user.email})`,
+    });
 
     res.json({
       _id: user._id,
       name: user.name,
       email: user.email,
-      role: user.role,
-      token: generateToken(user._id, user.role),
+      role: normalizedSelectedRole,
+      token,
+      message: `Welcome back, ${user.name} 👋`,
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -119,7 +171,9 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// ===================== ME =====================
+/* =====================================================
+ 👤 ME (Authenticated User)
+===================================================== */
 router.get("/me", protect, async (req, res) => {
   try {
     const me = await User.findById(req.user._id).select("-password");
@@ -129,7 +183,9 @@ router.get("/me", protect, async (req, res) => {
   }
 });
 
-// ===================== PASSWORD RESET OTP =====================
+/* =====================================================
+ 🔁 PASSWORD RESET (OTP)
+===================================================== */
 router.post("/send-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
@@ -187,7 +243,9 @@ router.put("/reset-password", async (req, res) => {
   }
 });
 
-// ===================== EMAIL VERIFICATION OTP =====================
+/* =====================================================
+ 📧 EMAIL VERIFICATION
+===================================================== */
 router.post("/send-verification-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
@@ -234,7 +292,9 @@ router.post("/verify-verification-otp", async (req, res) => {
   }
 });
 
-// ===================== OAUTH: GOOGLE & GITHUB =====================
+/* =====================================================
+ 🌐 OAUTH (Google & GitHub)
+===================================================== */
 function redirectWithToken(res, user) {
   const token = generateToken(user._id, user.role);
   const redirectUrl = `${process.env.CLIENT_URL}/oauth-success?token=${token}`;
@@ -245,7 +305,10 @@ router.get("/google", passport.authenticate("google", { scope: ["profile", "emai
 
 router.get(
   "/google/callback",
-  passport.authenticate("google", { session: false, failureRedirect: `${process.env.CLIENT_URL}/login?error=google_oauth_failed` }),
+  passport.authenticate("google", {
+    session: false,
+    failureRedirect: `${process.env.CLIENT_URL}/login?error=google_oauth_failed`,
+  }),
   async (req, res) => {
     await AuditLog.create({
       action: "OAUTH_LOGIN",
@@ -261,7 +324,10 @@ router.get("/github", passport.authenticate("github", { scope: ["user:email"], s
 
 router.get(
   "/github/callback",
-  passport.authenticate("github", { session: false, failureRedirect: `${process.env.CLIENT_URL}/login?error=github_oauth_failed` }),
+  passport.authenticate("github", {
+    session: false,
+    failureRedirect: `${process.env.CLIENT_URL}/login?error=github_oauth_failed`,
+  }),
   async (req, res) => {
     await AuditLog.create({
       action: "OAUTH_LOGIN",

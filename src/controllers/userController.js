@@ -1,43 +1,91 @@
-import User from "../models/User.js"
+import User from "../models/User.js";
+import AuditLog from "../models/AuditLog.js";
 
-// @desc Get all users
-// @route GET /api/users
-// @access Admin
+/* =====================================================
+   👥 GET ALL USERS (Admin + SuperAdmin)
+===================================================== */
 export const getUsers = async (req, res) => {
-  const users = await User.find().select("-password") // don’t send password
-  res.json(users)
-}
+  try {
+    const users = await User.find().select("-password");
+    res.json(users);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ message: "Error fetching users" });
+  }
+};
 
-// @desc Delete a user
-// @route DELETE /api/users/:id
-// @access Admin
+/* =====================================================
+   ❌ DELETE USER (Admin + SuperAdmin)
+===================================================== */
 export const deleteUser = async (req, res) => {
-  const user = await User.findById(req.params.id)
+  try {
+    const user = await User.findById(req.params.id);
 
-  if (!user) {
-    return res.status(404).json({ message: "User not found" })
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Prevent deleting superadmin itself
+    if (user.role === "superadmin") {
+      return res.status(403).json({ message: "Cannot delete a SuperAdmin account" });
+    }
+
+    await AuditLog.create({
+      action: "DELETE_USER",
+      performedBy: req.user._id,
+      targetUser: user._id,
+      targetUserSnapshot: { name: user.name, email: user.email, role: user.role },
+      details: `${req.user.role} deleted user: ${user.email}`,
+    });
+
+    await user.deleteOne();
+    res.json({ message: "User deleted successfully ❌" });
+  } catch (err) {
+    console.error("Error deleting user:", err);
+    res.status(500).json({ message: "Error deleting user" });
   }
+};
 
-  await user.deleteOne()
-  res.json({ message: "User deleted successfully" })
-}
-
-// @desc Update user role
-// @route PATCH /api/users/:id/role
-// @access Admin
+/* =====================================================
+   🔄 UPDATE USER ROLE (Admin + SuperAdmin)
+===================================================== */
 export const updateUserRole = async (req, res) => {
-  const { role } = req.body
-  if (!["admin", "candidate", "guest"].includes(role)) {
-    return res.status(400).json({ message: "Invalid role" })
+  try {
+    const { role } = req.body;
+
+    const validRoles = ["candidate", "mentor", "admin", "superadmin", "guest"];
+    if (!validRoles.includes(role.toLowerCase())) {
+      return res.status(400).json({ message: "Invalid role selected" });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const oldRole = user.role;
+    user.role = role.toLowerCase();
+    await user.save();
+
+    await AuditLog.create({
+      action: "UPDATE_ROLE",
+      performedBy: req.user._id,
+      targetUser: user._id,
+      targetUserSnapshot: { name: user.name, email: user.email },
+      details: `Role changed from ${oldRole} → ${role}`,
+    });
+
+    res.json({
+      message: `User role updated successfully to ${role} ✅`,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Error updating role:", err);
+    res.status(500).json({ message: "Error updating user role" });
   }
-
-  const user = await User.findById(req.params.id)
-  if (!user) {
-    return res.status(404).json({ message: "User not found" })
-  }
-
-  user.role = role
-  await user.save()
-
-  res.json({ message: "User role updated", user })
-}
+};

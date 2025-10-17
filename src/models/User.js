@@ -1,4 +1,3 @@
-// src/models/User.js
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
@@ -8,25 +7,29 @@ const userSchema = new mongoose.Schema(
 
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
 
-    // Hide by default; explicitly select in login
     password: { type: String, required: true, minlength: 6, select: false },
 
     role: {
       type: String,
-      enum: ["candidate", "admin", "superadmin", "guest"],
+      enum: ["candidate", "mentor", "recruiter", "admin", "superadmin", "guest"],
       default: "candidate",
       lowercase: true,
       trim: true,
     },
 
-    mobile: { type: String, default: "" }, // ✅ used by /send-otp for SMS
+    // ✅ Multi-role authorization support
+    allowedRoles: {
+      type: [String],
+      default: [],
+    },
 
+    mobile: { type: String, default: "" },
     avatar: { type: String, default: "" },
 
     resetPasswordToken: String,
     resetPasswordExpire: Date,
 
-    // ✅ Login Tracking
+    // ✅ Login tracking
     lastLogin: { type: Date },
     loginHistory: [
       {
@@ -36,11 +39,44 @@ const userSchema = new mongoose.Schema(
         location: String,
       },
     ],
+
+    /* =====================================================
+       🎓 Mentor-related Fields
+    ===================================================== */
+    mentorProfile: {
+      expertise: { type: String, default: "" },
+      experience: { type: Number, default: 0 },
+      bio: { type: String, default: "" },
+    },
+
+    // ✅ These were missing before
+    mentorRequested: { type: Boolean, default: false },
+    mentorApproved: { type: Boolean, default: false },
+
+    // ✅ Relation mappings
+    mentees: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    mentorAssigned: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true }
 );
 
-// ✅ Hash password before save
+/* =====================================================
+   🧩 Role consistency
+===================================================== */
+userSchema.pre("save", function (next) {
+  if (this.role) this.role = this.role.toLowerCase().trim();
+
+  if (!this.allowedRoles.includes(this.role)) {
+    this.allowedRoles.push(this.role);
+  }
+
+  this.allowedRoles = this.allowedRoles.map((r) => r.toLowerCase().trim());
+  next();
+});
+
+/* =====================================================
+   🔒 Password hashing
+===================================================== */
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
   const salt = await bcrypt.genSalt(10);
@@ -48,13 +84,9 @@ userSchema.pre("save", async function (next) {
   next();
 });
 
-// ✅ Ensure role is always lowercase/trimmed
-userSchema.pre("save", function (next) {
-  if (this.role) this.role = this.role.toLowerCase().trim();
-  next();
-});
-
-// ✅ Compare passwords
+/* =====================================================
+   🔑 Compare passwords
+===================================================== */
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };

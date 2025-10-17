@@ -1,4 +1,4 @@
-// index.js
+// src/index.js
 import express from "express";
 import dotenv from "dotenv";
 import connectDB from "./db.js";
@@ -21,18 +21,21 @@ import notificationsRoutes from "./routes/notificationRoutes.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import userActivityRoutes from "./routes/userActivity.js";
 import chatRoutes from "./routes/chat.js";
-import messageRoutes from "./routes/messageRoutes.js"; // ✅ NEW LINE (added)
+import messageRoutes from "./routes/messageRoutes.js";
+import mentorRoutes from "./routes/mentorRoutes.js";
 
 dotenv.config();
 connectDB();
 
 const app = express();
-app.set("trust proxy", 1);
+app.set("trust proxy", 1); // for secure cookies on HTTPS proxies
 
-// ----- ✅ CORS -----
+/* =====================================================
+   🛡️ CORS CONFIGURATION
+===================================================== */
 const allowedOrigins = [
-  // "https://onestop-frontend.netlify.app",
   "http://localhost:5173",
+  // "https://onestop-frontend.netlify.app", // Uncomment when deploying frontend
 ];
 
 app.use(
@@ -41,7 +44,7 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        callback(new Error(`Not allowed by CORS: ${origin}`));
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
@@ -49,27 +52,30 @@ app.use(
   })
 );
 
-// ----- ✅ JSON Parser -----
-app.use(express.json());
+/* =====================================================
+   ⚙️ MIDDLEWARE SETUP
+===================================================== */
+app.use(express.json({ limit: "10mb" })); // handle large JSON uploads safely
 
-// ----- ✅ Session -----
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "onestop_session_secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production", // true only in HTTPS
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
     },
   })
 );
 
-// ----- ✅ Passport -----
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ----- ✅ API Routes -----
+/* =====================================================
+   🚀 API ROUTES
+===================================================== */
 app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
 app.use("/api/users", userRoutes);
@@ -82,19 +88,27 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/useractivity", userActivityRoutes);
 app.use("/api/chat", chatRoutes);
-app.use("/api/messages", messageRoutes); // ✅ MOUNTED HERE
+app.use("/api/messages", messageRoutes);
+app.use("/api/mentor", mentorRoutes);
+app.use("/api/audit", activityRoutes);
 
-
-// Root
+/* =====================================================
+   🧭 ROOT ROUTE + HEALTH CHECK
+===================================================== */
 app.get("/", (_req, res) => {
-  res.send("🚀 OneStop Backend API running successfully!");
+  res.status(200).json({
+    message: "🚀 OneStop Backend API running successfully!",
+    environment: process.env.NODE_ENV || "development",
+  });
 });
 
-// ----- ✅ Server + Socket -----
+/* =====================================================
+   ⚡ SERVER & SOCKET INITIALIZATION
+===================================================== */
 const server = http.createServer(app);
 initSocket(server);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () =>
-  console.log(`🚀 Server + Socket running on port ${PORT}`)
+  console.log(`✅ Server & Socket running on port ${PORT}`)
 );

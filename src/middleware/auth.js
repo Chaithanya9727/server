@@ -1,64 +1,71 @@
+// src/middleware/auth.js
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 /* =====================================================
- 🔒 Protect route (requires valid token)
+   🔒 JWT Authentication Middleware
 ===================================================== */
 export const protect = async (req, res, next) => {
   try {
     let token;
 
-    // ✅ Extract Bearer token
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer ")
-    ) {
+    // Extract Bearer token
+    if (req.headers.authorization?.startsWith("Bearer ")) {
       token = req.headers.authorization.split(" ")[1];
     }
 
     if (!token) {
-      return res.status(401).json({ message: "Not authorized, no token" });
+      return res.status(401).json({ message: "Not authorized, token missing" });
     }
 
-    // ✅ Verify token with secret key
+    // Verify JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!decoded || !decoded.id) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
 
-    // ✅ Attach user to request
+    // Find user and attach to request
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
-      return res.status(401).json({ message: "User not found" });
+      return res.status(401).json({ message: "User not found or removed" });
     }
 
+    // Enrich request with user and request context
     req.user = user;
+    req.requestContext = {
+      ip: req.headers["x-forwarded-for"] || req.connection.remoteAddress,
+      userAgent: req.headers["user-agent"] || "",
+    };
+
     next();
   } catch (err) {
-    console.error("🔐 Auth error:", err.message);
-    res.status(401).json({ message: "Not authorized, token failed" });
+    console.error("🔐 Auth Error:", err.message);
+    res.status(401).json({ message: "Not authorized, token invalid" });
   }
 };
 
 /* =====================================================
- 🛡️ Role-based authorization middleware
- Example: authorize("admin", "superadmin")
+   🛡️ Role-based Access Middleware
+   Usage: authorize("admin", "mentor")
 ===================================================== */
 export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
     try {
       if (!req.user) {
-        return res.status(401).json({ message: "Not authenticated" });
+        return res.status(401).json({ message: "Authentication required" });
       }
 
       const userRole = req.user.role?.toLowerCase();
 
-      // ✅ Always allow superadmin to bypass all role restrictions
-      if (userRole === "superadmin") {
-        return next();
-      }
+      // Always allow SuperAdmin to bypass
+      if (userRole === "superadmin") return next();
 
-      // ✅ If role not in allowed list, block access
       if (!allowedRoles.map((r) => r.toLowerCase()).includes(userRole)) {
+        console.warn(
+          `🚫 Unauthorized Access: "${userRole}" tried to access "${req.originalUrl}"`
+        );
         return res.status(403).json({
-          message: `Access denied: ${userRole} role not permitted`,
+          message: `Access denied: ${userRole} not permitted`,
         });
       }
 
@@ -71,8 +78,35 @@ export const authorize = (...allowedRoles) => {
 };
 
 /* =====================================================
- 👑 SuperAdmin check middleware
- Use this on routes that only SuperAdmin can access
+   🎓 Mentor-only Shortcut
+===================================================== */
+export const isMentor = (req, res, next) => {
+  if (
+    req.user &&
+    (req.user.role === "mentor" || req.user.role === "superadmin")
+  ) {
+    return next();
+  } else {
+    return res.status(403).json({ message: "Access denied: Mentor only" });
+  }
+};
+
+/* =====================================================
+   👑 Admin-only Shortcut
+===================================================== */
+export const isAdmin = (req, res, next) => {
+  if (
+    req.user &&
+    (req.user.role === "admin" || req.user.role === "superadmin")
+  ) {
+    return next();
+  } else {
+    return res.status(403).json({ message: "Access denied: Admin only" });
+  }
+};
+
+/* =====================================================
+   🧩 SuperAdmin-only Shortcut
 ===================================================== */
 export const isSuperAdmin = (req, res, next) => {
   if (req.user && req.user.role === "superadmin") {
@@ -83,18 +117,6 @@ export const isSuperAdmin = (req, res, next) => {
 };
 
 /* =====================================================
- 🧩 Simple Admin-only middleware (still supported)
-===================================================== */
-export const isAdmin = (req, res, next) => {
-  if (req.user && (req.user.role === "admin" || req.user.role === "superadmin")) {
-    // ✅ superadmin also allowed wherever admin has access
-    next();
-  } else {
-    res.status(403).json({ message: "Access denied: Admins only" });
-  }
-};
-
-/* =====================================================
- ✅ Alias for backward compatibility
+   ✅ Compatibility Export
 ===================================================== */
 export const authMiddleware = protect;
