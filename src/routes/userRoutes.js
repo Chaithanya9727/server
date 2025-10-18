@@ -1,3 +1,4 @@
+// src/routes/userRoutes.js
 import express from "express";
 import User from "../models/User.js";
 import { protect } from "../middleware/auth.js";
@@ -11,6 +12,18 @@ import fs from "fs";
 
 const router = express.Router();
 const upload = multer({ dest: "uploads/" });
+
+/* =====================================================
+   🧠 Utility: Generate a strong random password
+===================================================== */
+function generateStrongPassword(length = 12) {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+";
+  return Array.from(
+    { length },
+    () => chars[Math.floor(Math.random() * chars.length)]
+  ).join("");
+}
 
 /* =====================================================
    🧾 SELF PROFILE ROUTES (For All Authenticated Users)
@@ -47,7 +60,7 @@ router.put("/me", protect, async (req, res) => {
   }
 });
 
-// ✅ Change password
+// ✅ Change password (Self)
 router.put("/me/password", protect, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
@@ -186,48 +199,10 @@ router.put("/:id/role", protect, authorize(["superadmin"]), async (req, res) => 
 });
 
 /* =====================================================
-   🆕 RESET PASSWORD BY ADMIN (NEWLY ADDED)
-===================================================== */
-router.put(
-  "/:id/reset-password",
-  protect,
-  authorize(["admin", "superadmin"]),
-  async (req, res) => {
-    try {
-      const { newPassword } = req.body;
-      const user = await User.findById(req.params.id);
-      if (!user) return res.status(404).json({ message: "User not found" });
-
-      user.password = newPassword;
-      await user.save();
-
-      await AuditLog.create({
-        action: "ADMIN_RESET_PASSWORD",
-        performedBy: req.user._id,
-        targetUser: user._id,
-        targetUserSnapshot: { name: user.name, email: user.email, role: user.role },
-        details: `${req.user.role} reset password for ${user.email}`,
-      });
-
-      await sendEmail(
-        user.email,
-        "🔒 Your Password Has Been Reset",
-        `Hello ${user.name},\n\nYour account password was reset by an administrator.\nPlease log in using your new password.\n\nIf this wasn’t you, contact support immediately.\n\n— OneStop Hub`
-      );
-
-      res.json({ message: "Password reset successfully ✅" });
-    } catch (err) {
-      console.error("Reset password error:", err);
-      res.status(500).json({ message: "Error resetting password" });
-    }
-  }
-);
-
-/* =====================================================
    🧑‍🏫 MENTOR MANAGEMENT (Admin + SuperAdmin)
 ===================================================== */
 
-// ✅ Get pending mentors for approval
+// ✅ Get pending mentors
 router.get("/mentors/pending", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const mentors = await User.find({
@@ -241,7 +216,7 @@ router.get("/mentors/pending", protect, authorize(["admin", "superadmin"]), asyn
   }
 });
 
-// ✅ Approve mentor profile
+// ✅ Approve mentor
 router.put("/mentors/:id/approve", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const mentor = await User.findById(req.params.id);
@@ -272,7 +247,7 @@ router.put("/mentors/:id/approve", protect, authorize(["admin", "superadmin"]), 
   }
 });
 
-// ✅ Reject mentor profile
+// ✅ Reject mentor
 router.put("/mentors/:id/reject", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
     const mentor = await User.findById(req.params.id);
@@ -296,33 +271,47 @@ router.put("/mentors/:id/reject", protect, authorize(["admin", "superadmin"]), a
   }
 });
 
-// ✅ Assign mentor to candidate
-router.put("/assign-mentor/:candidateId", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+/* =====================================================
+   🗝️ SUPERADMIN PASSWORD RESET
+===================================================== */
+router.put("/:id/reset-password", protect, authorize(["superadmin"]), async (req, res) => {
   try {
-    const { mentorId } = req.body;
-    const candidate = await User.findById(req.params.candidateId);
-    const mentor = await User.findById(mentorId);
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (!candidate || !mentor)
-      return res.status(404).json({ message: "Candidate or Mentor not found" });
+    const newPassword = generateStrongPassword(12);
+    user.password = newPassword;
+    await user.save();
 
-    candidate.mentorAssigned = mentor._id;
-    mentor.mentees.push(candidate._id);
+    await sendEmail(
+      user.email,
+      "🔐 Your Password Has Been Reset - OneStop Hub",
+      `
+Hello ${user.name || "User"},
 
-    await candidate.save();
-    await mentor.save();
+Your password has been reset by the SuperAdmin.
+
+Here are your temporary credentials:
+📧 Email: ${user.email}
+🔑 Temporary Password: ${newPassword}
+
+Please log in and change it immediately.
+
+— OneStop Hub Security Team
+`
+    );
 
     await AuditLog.create({
-      action: "ASSIGN_MENTOR",
+      action: "ADMIN_RESET_PASSWORD",
       performedBy: req.user._id,
-      targetUser: candidate._id,
-      details: `Mentor ${mentor.email} assigned to ${candidate.email}`,
+      targetUser: user._id,
+      details: `SuperAdmin reset password for ${user.email}`,
     });
 
-    res.json({ message: "Mentor assigned successfully ✅" });
+    res.json({ message: "Temporary password generated and emailed ✅" });
   } catch (err) {
-    console.error("Assign mentor error:", err);
-    res.status(500).json({ message: "Error assigning mentor" });
+    console.error("Reset password error:", err);
+    res.status(500).json({ message: "Error resetting password" });
   }
 });
 
