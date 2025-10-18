@@ -1,4 +1,3 @@
-// src/index.js
 import express from "express";
 import dotenv from "dotenv";
 import connectDB from "./db.js";
@@ -23,19 +22,20 @@ import userActivityRoutes from "./routes/userActivity.js";
 import chatRoutes from "./routes/chat.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import mentorRoutes from "./routes/mentorRoutes.js";
+import internalMailRoutes from "./routes/internalMail.js";
 
 dotenv.config();
 connectDB();
 
 const app = express();
-app.set("trust proxy", 1); // for secure cookies on HTTPS proxies
+app.set("trust proxy", 1);
 
 /* =====================================================
    🛡️ CORS CONFIGURATION
 ===================================================== */
 const allowedOrigins = [
   "http://localhost:5173",
-  // "https://onestop-frontend.netlify.app", // Uncomment when deploying frontend
+  // "https://onestop-frontend.netlify.app", // Uncomment for production
 ];
 
 app.use(
@@ -53,23 +53,21 @@ app.use(
 );
 
 /* =====================================================
-   ⚙️ MIDDLEWARE SETUP
+   ⚙️ MIDDLEWARE
 ===================================================== */
-app.use(express.json({ limit: "10mb" })); // handle large JSON uploads safely
-
+app.use(express.json({ limit: "10mb" }));
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "onestop_session_secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // true only in HTTPS
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 24 * 60 * 60 * 1000,
     },
   })
 );
-
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -92,8 +90,11 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/mentor", mentorRoutes);
 app.use("/api/audit", activityRoutes);
 
+// ✉️ New Internal Mail System
+app.use("/api/mail", internalMailRoutes);
+
 /* =====================================================
-   🧭 ROOT ROUTE + HEALTH CHECK
+   🧭 HEALTH CHECK
 ===================================================== */
 app.get("/", (_req, res) => {
   res.status(200).json({

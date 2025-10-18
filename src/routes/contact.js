@@ -1,62 +1,141 @@
-import express from "express";
-import Contact from "../models/Contact.js";  // your Contact model (name, email, message, createdAt)
-import { protect, authorize } from "../middleware/auth.js";
-import AuditLog from "../models/AuditLog.js";
+\import { useState } from "react";
+import {
+  Box,
+  Paper,
+  Typography,
+  TextField,
+  Button,
+  Alert,
+  Stack,
+  CircularProgress,
+} from "@mui/material";
+import useApi from "../hooks/useApi";
+import { useAuth } from "../context/AuthContext";
 
-const router = express.Router();
+export default function Contact() {
+  const { user } = useAuth();
+  const { post } = useApi();
 
-// 📩 Public → Submit a contact message
-router.post("/", async (req, res) => {
-  try {
-    const { name, email, message } = req.body;
-    if (!name || !email || !message) {
-      return res.status(400).json({ message: "All fields required" });
-    }
+  const [form, setForm] = useState({
+    name: user?.name || "",
+    email: user?.email || "",
+    subject: "",
+    message: "",
+  });
 
-    const newMsg = await Contact.create({ name, email, message });
-    res.status(201).json(newMsg);
-  } catch (err) {
-    console.error("Contact form error:", err);
-    res.status(500).json({ message: "Error submitting message" });
-  }
-});
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState("");
+  const [error, setError] = useState("");
 
-// 📩 Admin → Get all messages
-router.get("/", protect, authorize(["admin"]), async (req, res) => {
-  try {
-    const messages = await Contact.find().sort({ createdAt: -1 });
-    res.json(messages);
-  } catch (err) {
-    console.error("Fetch messages error:", err);
-    res.status(500).json({ message: "Error fetching messages" });
-  }
-});
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
 
-// ❌ Admin → Delete a message
-router.delete("/:id", protect, authorize(["admin"]), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const msg = await Contact.findById(id);
-    if (!msg) return res.status(404).json({ message: "Message not found" });
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setLoading(true);
 
-    await msg.deleteOne();
-
-    // 🔏 Audit log
     try {
-      await AuditLog.create({
-        action: "DELETE_MESSAGE",
-        performedBy: req.user._id,
-        details: `Deleted message from ${msg.name} (${msg.email})`,
+      await post("/contact", form);
+      setSuccess("✅ Message sent successfully! Our team will contact you soon.");
+      setForm({
+        name: user?.name || "",
+        email: user?.email || "",
+        subject: "",
+        message: "",
       });
-    } catch (e) {
-      console.error("AuditLog (DELETE_MESSAGE) failed:", e.message);
+    } catch (err) {
+      console.error("Contact send failed:", err);
+      setError("❌ Failed to send message. Please try again later.");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("Delete message error:", err);
-    res.status(500).json({ message: "Error deleting message" });
-  }
-});
+  return (
+    <Box sx={{ p: 4, maxWidth: 700, mx: "auto" }}>
+      <Paper sx={{ p: 4, boxShadow: 3, borderRadius: 3 }}>
+        <Typography variant="h4" fontWeight="bold" gutterBottom>
+          📩 Contact Us
+        </Typography>
+        <Typography color="text.secondary" sx={{ mb: 3 }}>
+          Have a question or feedback? We’d love to hear from you.
+        </Typography>
 
-export default router;
+        {error && <Alert severity="error">{error}</Alert>}
+        {success && <Alert severity="success">{success}</Alert>}
+
+        <Box
+          component="form"
+          onSubmit={handleSubmit}
+          sx={{ display: "grid", gap: 2, mt: 3 }}
+        >
+          <TextField
+            label="Name"
+            name="name"
+            value={form.name}
+            onChange={handleChange}
+            required
+            fullWidth
+          />
+          <TextField
+            label="Email"
+            name="email"
+            type="email"
+            value={form.email}
+            onChange={handleChange}
+            required
+            fullWidth
+          />
+          <TextField
+            label="Subject"
+            name="subject"
+            value={form.subject}
+            onChange={handleChange}
+            required
+            fullWidth
+          />
+          <TextField
+            label="Message"
+            name="message"
+            value={form.message}
+            onChange={handleChange}
+            required
+            fullWidth
+            multiline
+            minRows={4}
+          />
+
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={loading}
+              sx={{
+                bgcolor: "#1976d2",
+                ":hover": { bgcolor: "#1565c0" },
+              }}
+            >
+              {loading ? <CircularProgress size={24} color="inherit" /> : "Send"}
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() =>
+                setForm({
+                  name: user?.name || "",
+                  email: user?.email || "",
+                  subject: "",
+                  message: "",
+                })
+              }
+            >
+              Clear
+            </Button>
+          </Stack>
+        </Box>
+      </Paper>
+    </Box>
+  );
+}
