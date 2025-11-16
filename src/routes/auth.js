@@ -34,31 +34,30 @@ const otpLimiter = rateLimit({
 router.post("/register-candidate", async (req, res) => {
   try {
     const { name, email, password, mobile } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = (email || "").toLowerCase();
+
+    const exists = await User.findOne({ email: normalizedEmail });
     if (exists) return res.status(400).json({ message: "User already exists" });
 
-    // Verify email OTP
     const verifiedOtp = await OTP.findOne({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       purpose: "email-verification",
       verified: true,
     });
 
     if (!verifiedOtp)
-      return res
-        .status(400)
-        .json({ message: "Please verify your email before registering." });
+      return res.status(400).json({ message: "Please verify your email before registering." });
 
     const user = await User.create({
       name,
-      email,
+      email: normalizedEmail,
       password,
       mobile,
       role: "candidate",
-      allowedRoles: ["candidate"], // ✅ initialize allowed roles
+      allowedRoles: ["candidate"],
     });
 
-    await OTP.deleteMany({ email: email.toLowerCase(), purpose: "email-verification" });
+    await OTP.deleteMany({ email: normalizedEmail, purpose: "email-verification" });
 
     res.status(201).json({
       message: "Candidate registered successfully ✅",
@@ -71,21 +70,95 @@ router.post("/register-candidate", async (req, res) => {
 });
 
 /* =====================================================
+ 🧳 REGISTER - Recruiter (Admin Approval Required)
+   NOTE: Supports both `/register-recruiter` and `/register-admin`
+===================================================== */
+const registerRecruiterHandler = async (req, res) => {
+  try {
+    const { name, orgName, email, password, mobile } = req.body;
+    const normalizedEmail = (email || "").toLowerCase();
+
+    if (!name || !orgName || !normalizedEmail || !password || !mobile) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const exists = await User.findOne({ email: normalizedEmail });
+    if (exists) return res.status(400).json({ message: "User with this email already exists" });
+
+    const verifiedOtp = await OTP.findOne({
+      email: normalizedEmail,
+      purpose: "email-verification",
+      verified: true,
+    });
+
+    if (!verifiedOtp)
+      return res.status(400).json({ message: "Please verify your email before registering." });
+
+    const recruiter = await User.create({
+      name,
+      orgName: orgName || "Independent Recruiter",
+      email: normalizedEmail,
+      password,
+      mobile,
+      role: "recruiter",
+      status: "pending", // requires admin approval
+      allowedRoles: ["recruiter"],
+    });
+
+    await OTP.deleteMany({ email: normalizedEmail, purpose: "email-verification" });
+
+    await AuditLog.create({
+      action: "REGISTER_RECRUITER",
+      targetUser: recruiter._id,
+      performedBy: recruiter._id,
+      details: `Recruiter signup submitted for approval (${recruiter.email})`,
+    });
+
+    await sendEmail(
+      recruiter.email,
+      "Recruiter Registration Received — OneStop Hub",
+      `Hello ${recruiter.name},
+
+Thanks for registering as a recruiter for ${orgName || "your organization"}.
+Your application is received and is currently under review.
+
+You'll be notified once an admin approves your access.
+
+— OneStop Hub Team`
+    );
+
+    res.status(201).json({
+      message: "Recruiter registered successfully. Await admin approval ✅",
+      recruiterId: recruiter._id,
+    });
+  } catch (err) {
+    console.error("Register recruiter error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ✅ Both endpoints now point to same recruiter handler
+router.post("/register-recruiter", registerRecruiterHandler);
+router.post("/register-admin", registerRecruiterHandler);
+
+/* =====================================================
  👑 CREATE ADMIN (SuperAdmin Only)
 ===================================================== */
 router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res) => {
   try {
     const { name, email, password, mobile } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = (email || "").toLowerCase();
+
+    const exists = await User.findOne({ email: normalizedEmail });
     if (exists) return res.status(400).json({ message: "Admin already exists" });
 
     const admin = await User.create({
       name,
-      email,
+      email: normalizedEmail,
       password,
       mobile,
       role: "admin",
-      allowedRoles: ["admin"], // ✅ add allowedRoles
+      allowedRoles: ["admin"],
     });
 
     await AuditLog.create({
@@ -98,7 +171,13 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
     await sendEmail(
       admin.email,
       "Admin Account Created - OneStop Hub",
-      `Hello ${admin.name},\n\nYou have been added as an Admin.\nYour password: ${password}\nPlease log in and change it immediately.\n\n— OneStop Team`
+      `Hello ${admin.name},
+
+You have been added as an Admin.
+Your password: ${password}
+Please log in and change it immediately.
+
+— OneStop Hub Team`
     );
 
     res.status(201).json({ message: "Admin created successfully ✅" });
@@ -109,47 +188,47 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
 });
 
 /* =====================================================
- 🔐 LOGIN (With Multi-Role Validation)
+ 🔐 LOGIN (Multi-role with Recruiter Status Gate)
 ===================================================== */
 router.post("/login", async (req, res) => {
   try {
     const { email, password, selectedRole } = req.body;
 
-    if (!email || !password || !selectedRole) {
+    if (!email || !password || !selectedRole)
       return res.status(400).json({ message: "All fields are required" });
-    }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail }).select("+password");
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
-
-    // ✅ Normalize roles for comparison
     const normalizedSelectedRole = selectedRole.toLowerCase();
-    const normalizedAllowedRoles = (user.allowedRoles || []).map((r) => r.toLowerCase());
+    const allowed = (user.allowedRoles || []).map((r) => r.toLowerCase());
 
-    // ✅ Validate if selected role is authorized
-    if (
-      user.role.toLowerCase() !== normalizedSelectedRole &&
-      !normalizedAllowedRoles.includes(normalizedSelectedRole)
-    ) {
+    if (user.role.toLowerCase() !== normalizedSelectedRole && !allowed.includes(normalizedSelectedRole)) {
       return res.status(403).json({
         message: `You are registered as a ${user.role}. Please select '${user.role}' or another authorized role to log in.`,
         allowedRoles: user.allowedRoles,
       });
     }
 
-    // ✅ Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+    if (normalizedSelectedRole === "recruiter") {
+      const status = (user.status || "").toLowerCase();
+      if (status !== "approved") {
+        return res.status(403).json({
+          message:
+            status === "rejected"
+              ? "Your recruiter access request was rejected."
+              : "Your recruiter application is pending admin approval.",
+          status: user.status || "pending",
+        });
+      }
     }
 
-    // ✅ Generate JWT Token
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+
     const token = generateToken(user._id, normalizedSelectedRole);
 
-    // 🧾 Log successful login
     await AuditLog.create({
       action: "LOGIN",
       performedBy: user._id,
@@ -189,12 +268,13 @@ router.get("/me", protect, async (req, res) => {
 router.post("/send-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = (email || "").toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await OTP.create({
-      email,
+      email: normalizedEmail,
       otp,
       purpose: "password-reset",
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
@@ -216,11 +296,18 @@ router.post("/send-otp", otpLimiter, async (req, res) => {
 router.post("/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
-    const record = await OTP.findOne({ email, otp, purpose: "password-reset" });
+    const normalizedEmail = (email || "").toLowerCase();
+
+    const record = await OTP.findOne({
+      email: normalizedEmail,
+      otp,
+      purpose: "password-reset",
+    });
+
     if (!record || record.expiresAt < new Date())
       return res.status(400).json({ message: "Invalid or expired OTP" });
 
-    await OTP.deleteMany({ email, purpose: "password-reset" });
+    await OTP.deleteMany({ email: normalizedEmail, purpose: "password-reset" });
     res.json({ success: true, message: "OTP verified ✅" });
   } catch {
     res.status(500).json({ message: "Error verifying OTP" });
@@ -230,12 +317,14 @@ router.post("/verify-otp", async (req, res) => {
 router.put("/reset-password", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = (email || "").toLowerCase();
+
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(404).json({ message: "User not found" });
 
     user.password = password;
     await user.save();
-    await OTP.deleteMany({ email, purpose: "password-reset" });
+    await OTP.deleteMany({ email: normalizedEmail, purpose: "password-reset" });
 
     res.json({ message: "Password reset successfully ✅" });
   } catch {
@@ -249,12 +338,14 @@ router.put("/reset-password", async (req, res) => {
 router.post("/send-verification-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = (email || "").toLowerCase();
+
+    const exists = await User.findOne({ email: normalizedEmail });
     if (exists) return res.status(400).json({ message: "User already registered" });
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     await OTP.create({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       otp,
       purpose: "email-verification",
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
@@ -262,7 +353,7 @@ router.post("/send-verification-otp", otpLimiter, async (req, res) => {
     });
 
     await sendEmail(
-      email,
+      normalizedEmail,
       "Verify Your Email - OneStop Hub",
       `Your OneStop Hub verification code is: ${otp}\nValid for 5 minutes.`
     );
@@ -276,11 +367,14 @@ router.post("/send-verification-otp", otpLimiter, async (req, res) => {
 router.post("/verify-verification-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
+    const normalizedEmail = (email || "").toLowerCase();
+
     const record = await OTP.findOne({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       otp,
       purpose: "email-verification",
     });
+
     if (!record || record.expiresAt < new Date())
       return res.status(400).json({ message: "Invalid or expired OTP" });
 

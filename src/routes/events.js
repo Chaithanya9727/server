@@ -1,141 +1,201 @@
+// routes/events.js
 import express from "express";
-import Event from "../models/Event.js";
+import {
+  createEvent,
+  getEvents,
+  getEventById,
+  updateEvent,
+  deleteEvent,
+  registerForEvent,
+  uploadSubmission,
+  evaluateSubmission,
+  getLeaderboard,
+  listSubmissionsForEvent,
+  listMyRegistrations,
+  eventAdminMetrics,
+  upload,
+} from "../controllers/eventController.js";
+
 import { protect } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
+import { getEventRegistrations } from "../controllers/registrationController.js";
 import AuditLog from "../models/AuditLog.js";
+import Event from "../models/Event.js";
 
 const router = express.Router();
 
-// ➕ Create Event (Admin + SuperAdmin)
-router.post("/", protect, authorize(["admin", "superadmin"]), async (req, res) => {
-  try {
-    const { title, description, date, location } = req.body;
-    const event = await Event.create({
-      title,
-      description,
-      date,
-      location,
-      createdBy: req.user._id,
-    });
+/* =====================================================
+   📊 REGISTRATIONS (Unstop-Style Admin Panel)
+===================================================== */
 
-    await AuditLog.create({
-      action: "CREATE_EVENT",
-      performedBy: req.user._id,
-      details: `Created event "${title}" on ${date} at ${location}`,
-    });
+/**
+ * @route   GET /api/events/:eventId/registrations
+ * @desc    Paginated list of all participants for a specific event
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.get(
+  "/:eventId/registrations",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  getEventRegistrations
+);
 
-    res.status(201).json(event);
-  } catch (err) {
-    console.error("Create event error:", err);
-    res.status(500).json({ message: "Error creating event" });
+/* =====================================================
+   🧱 EVENT CRUD & PUBLIC ROUTES
+===================================================== */
+
+/**
+ * @route   POST /api/events
+ * @desc    Create new event
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.post(
+  "/",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  upload.single("cover"), // optional banner image
+  createEvent
+);
+
+/**
+ * @route   GET /api/events
+ * @desc    Public event listing with optional filters
+ * @access  Public
+ */
+router.get("/", getEvents);
+
+/**
+ * @route   GET /api/events/:id
+ * @desc    Get single event details
+ * @access  Public
+ */
+router.get("/:id", getEventById);
+
+/**
+ * @route   PUT /api/events/:id
+ * @desc    Update event details
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.put(
+  "/:id",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  upload.single("cover"),
+  updateEvent
+);
+
+/**
+ * @route   DELETE /api/events/:id
+ * @desc    Delete event
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.delete(
+  "/:id",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  deleteEvent
+);
+
+/* =====================================================
+   🎟️ REGISTRATION & SUBMISSION FLOW
+===================================================== */
+
+/**
+ * @route   POST /api/events/:id/register
+ * @desc    Register a user/team for the event
+ * @access  Logged-in users
+ */
+router.post("/:id/register", protect, registerForEvent);
+
+/**
+ * @route   POST /api/events/:id/submit
+ * @desc    Submit a project or file for an event
+ * @access  Registered users
+ */
+router.post("/:id/submit", protect, upload.single("file"), uploadSubmission);
+
+/**
+ * @route   POST /api/events/:id/evaluate
+ * @desc    Admin/Mentor/SuperAdmin evaluates a participant
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.post(
+  "/:id/evaluate",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  evaluateSubmission
+);
+
+/**
+ * @route   GET /api/events/:id/leaderboard
+ * @desc    Get leaderboard for an event
+ * @access  Public
+ */
+router.get("/:id/leaderboard", getLeaderboard);
+
+/* =====================================================
+   📈 DASHBOARD & METRICS
+===================================================== */
+
+/**
+ * @route   GET /api/events/registrations/me
+ * @desc    Get events registered by logged-in user
+ * @access  Logged-in users
+ */
+router.get("/registrations/me", protect, listMyRegistrations);
+
+/**
+ * @route   GET /api/events/admin/metrics
+ * @desc    Admin dashboard metrics overview
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.get(
+  "/admin/metrics",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  eventAdminMetrics
+);
+
+/**
+ * @route   GET /api/events/:id/submissions
+ * @desc    List all submissions for an event (Admin)
+ * @access  Admin / Mentor / SuperAdmin
+ */
+router.get(
+  "/:id/submissions",
+  protect,
+  authorize(["admin", "mentor", "superadmin"]),
+  listSubmissionsForEvent
+);
+
+/* =====================================================
+   🗑️ LEGACY UTILITIES (SuperAdmin Only)
+===================================================== */
+
+/**
+ * @route   DELETE /api/events/bulk/all
+ * @desc    Delete all events (SuperAdmin)
+ * @access  SuperAdmin only
+ */
+router.delete(
+  "/bulk/all",
+  protect,
+  authorize(["superadmin"]),
+  async (req, res) => {
+    try {
+      const count = await Event.countDocuments();
+      await Event.deleteMany({});
+      await AuditLog.create({
+        action: "DELETE_ALL_EVENTS",
+        performedBy: req.user._id,
+        details: `SuperAdmin deleted all ${count} events`,
+      });
+      res.json({ message: `Deleted all ${count} events ✅` });
+    } catch (err) {
+      console.error("Bulk delete events error:", err);
+      res.status(500).json({ message: "Error bulk deleting events" });
+    }
   }
-});
-
-// 📌 Get Events (Public)
-router.get("/", async (req, res) => {
-  try {
-    const { search = "", page = 1, limit = 6 } = req.query;
-    const query = search ? { title: { $regex: search, $options: "i" } } : {};
-
-    const total = await Event.countDocuments(query);
-    const events = await Event.find(query)
-      .sort({ date: 1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit));
-
-    res.json({
-      events,
-      total,
-      page: Number(page),
-      pages: Math.ceil(total / limit),
-    });
-  } catch (err) {
-    console.error("Fetch events error:", err);
-    res.status(500).json({ message: "Error fetching events" });
-  }
-});
-
-// ✏️ Update Event (Admin + SuperAdmin)
-router.put("/:id", protect, authorize(["admin", "superadmin"]), async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.id);
-    if (!event) return res.status(404).json({ message: "Event not found" });
-
-    const before = {
-      title: event.title,
-      description: event.description,
-      date: event.date,
-      location: event.location,
-    };
-
-    event.title = req.body.title ?? event.title;
-    event.description = req.body.description ?? event.description;
-    event.date = req.body.date ?? event.date;
-    event.location = req.body.location ?? event.location;
-
-    await event.save();
-
-    const after = {
-      title: event.title,
-      description: event.description,
-      date: event.date,
-      location: event.location,
-    };
-
-    const changes = Object.keys(after)
-      .filter((k) => String(after[k]) !== String(before[k]))
-      .map((k) => `${k}: "${before[k]}" → "${after[k]}"`)
-      .join(", ");
-
-    await AuditLog.create({
-      action: "UPDATE_EVENT",
-      performedBy: req.user._id,
-      details: changes || `Event (id: ${event._id}) updated with no changes`,
-    });
-
-    res.json(event);
-  } catch (err) {
-    console.error("Update event error:", err);
-    res.status(500).json({ message: "Error updating event" });
-  }
-});
-
-// ❌ Delete Event (Admin + SuperAdmin)
-router.delete("/:id", protect, authorize(["admin", "superadmin"]), async (req, res) => {
-  try {
-    const event = await Event.findById(req.params.id);
-    if (!event) return res.status(404).json({ message: "Event not found" });
-
-    await event.deleteOne();
-
-    await AuditLog.create({
-      action: "DELETE_EVENT",
-      performedBy: req.user._id,
-      details: `Deleted event "${event.title}" (id: ${event._id})`,
-    });
-
-    res.json({ message: "Event deleted successfully" });
-  } catch (err) {
-    console.error("Delete event error:", err);
-    res.status(500).json({ message: "Error deleting event" });
-  }
-});
-
-// 🧹 Bulk Delete All Events (SuperAdmin only)
-router.delete("/bulk/all", protect, authorize(["superadmin"]), async (req, res) => {
-  try {
-    const count = await Event.countDocuments();
-    await Event.deleteMany({});
-    await AuditLog.create({
-      action: "DELETE_ALL_EVENTS",
-      performedBy: req.user._id,
-      details: `SuperAdmin deleted all ${count} events`,
-    });
-    res.json({ message: `Deleted all ${count} events ✅` });
-  } catch (err) {
-    console.error("Bulk delete events error:", err);
-    res.status(500).json({ message: "Error bulk deleting events" });
-  }
-});
+);
 
 export default router;

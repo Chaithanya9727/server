@@ -1,20 +1,24 @@
 // utils/sendEmail.js
 import nodemailer from "nodemailer";
 
-export const sendEmail = async (to, subject, text, html = "") => {
+/* =====================================================
+   ✉️ Universal Email Utility - OneStop Hub
+   Supports text and HTML emails (Gmail App Password)
+===================================================== */
+export const sendEmail = async (to, subject, text = "", html = "") => {
   try {
-    // ✅ Create reusable transporter object using Gmail SMTP
+    // ✅ Configure Gmail SMTP Transporter
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
       port: 587,
-      secure: false, // use TLS
+      secure: false, // use TLS (STARTTLS)
       auth: {
-        user: process.env.EMAIL_USER,
+        user: process.env.EMAIL_USER, // your verified Gmail
         pass: process.env.EMAIL_PASS, // Gmail App Password
       },
     });
 
-    // ✅ Default HTML template (if not provided)
+    // ✅ Default HTML Template if none provided
     const defaultHtml = `
       <div style="font-family: Arial, sans-serif; padding: 20px; background: #f9fafc;">
         <h2 style="color: #4F46E5;">OneStop Hub</h2>
@@ -30,13 +34,13 @@ export const sendEmail = async (to, subject, text, html = "") => {
       from: `"OneStop Hub" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      text,
+      text: text || "No text content provided.",
       html: html || defaultHtml,
     };
 
-    // ✅ Send email
+    // ✅ Send Email
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent successfully to: ${to} (${info.response})`);
+    console.log(`✅ Email sent successfully to ${to}: ${info.response}`);
     return true;
   } catch (err) {
     console.error("❌ Email send error:", err.message);

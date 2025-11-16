@@ -1,9 +1,35 @@
 // src/models/AuditLog.js
 import mongoose from "mongoose";
 
+/**
+ * 🧾 Audit Log Schema
+ * --------------------------------------
+ * Tracks all system actions for accountability, debugging,
+ * and analytics (admin approvals, job actions, login events, etc.)
+ *
+ * Example:
+ * await AuditLog.create({
+ *   action: "RECRUITER_APPROVED",
+ *   targetUser: recruiter._id,
+ *   targetUserSnapshot: {
+ *     name: recruiter.name,
+ *     email: recruiter.email,
+ *     role: recruiter.role,
+ *   },
+ *   performedBy: req.user._id,
+ *   performedBySnapshot: {
+ *     name: req.user.name,
+ *     email: req.user.email,
+ *     role: req.user.role,
+ *   },
+ *   details: `Recruiter ${recruiter.email} approved by ${req.user.email}`,
+ *   context: { ip: req.ip, userAgent: req.headers["user-agent"] },
+ * });
+ */
+
 const auditLogSchema = new mongoose.Schema(
   {
-    // 🎯 Type of action performed (e.g., "MENTOR_APPROVED", "LOGIN", "DELETE_USER")
+    // 🎯 The action performed
     action: {
       type: String,
       required: true,
@@ -11,41 +37,47 @@ const auditLogSchema = new mongoose.Schema(
       uppercase: true,
     },
 
-    // 👤 User affected by the action (optional)
+    // 👤 The user affected by the action (if applicable)
     targetUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
 
-    // 📦 Snapshot of affected user (keeps context even if user is deleted)
+    // 💼 If action relates to a job or entity
+    targetJob: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Job",
+    },
+
+    // 🧍 Snapshot of affected user at time of action
     targetUserSnapshot: {
       name: { type: String, trim: true },
       email: { type: String, trim: true, lowercase: true },
       role: { type: String, trim: true },
     },
 
-    // ⚙️ User who performed the action (Admin / Mentor / SuperAdmin / Candidate)
+    // 👑 The user who performed the action
     performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    // 🧾 Who performed (snapshot, for historical accuracy)
+    // 🧾 Snapshot of performer (name/email/role at time of action)
     performedBySnapshot: {
       name: { type: String, trim: true },
       email: { type: String, trim: true, lowercase: true },
       role: { type: String, trim: true },
     },
 
-    // 🧠 Detailed message or metadata
+    // 🧠 Detailed message, reason, or metadata
     details: {
       type: String,
       trim: true,
       default: "",
     },
 
-    // 🌍 Optional IP, device, or environment details
+    // 🌍 Context data (for analytics / forensics)
     context: {
       ip: { type: String, default: "" },
       userAgent: { type: String, default: "" },
@@ -57,7 +89,9 @@ const auditLogSchema = new mongoose.Schema(
   }
 );
 
-// 🧠 Pre-save hook to ensure lowercase emails
+/* =====================================================
+   🔁 Pre-Save Normalization
+===================================================== */
 auditLogSchema.pre("save", function (next) {
   if (this.targetUserSnapshot?.email) {
     this.targetUserSnapshot.email = this.targetUserSnapshot.email.toLowerCase();
@@ -68,10 +102,70 @@ auditLogSchema.pre("save", function (next) {
   next();
 });
 
-// 🧭 Index for performance (sort/filter logs faster)
+/* =====================================================
+   ⚡ Indexes for Performance (admin analytics)
+===================================================== */
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ action: 1 });
 auditLogSchema.index({ "performedBySnapshot.email": 1 });
+auditLogSchema.index({ "targetUserSnapshot.email": 1 });
+auditLogSchema.index({ performedBy: 1 });
+auditLogSchema.index({ targetUser: 1 });
+auditLogSchema.index({ targetJob: 1 });
 
-// ✅ Model export
-export default mongoose.model("AuditLog", auditLogSchema);
+/* =====================================================
+   🧠 Static Helper (Optional)
+   - Creates a clean audit record automatically
+===================================================== */
+auditLogSchema.statics.record = async function ({
+  action,
+  targetUser,
+  targetJob,
+  performedBy,
+  details = "",
+  context = {},
+}) {
+  try {
+    const performer = await mongoose.model("User").findById(performedBy);
+    let targetUserSnapshot = null;
+    let performedBySnapshot = null;
+
+    if (targetUser) {
+      const target = await mongoose.model("User").findById(targetUser);
+      if (target) {
+        targetUserSnapshot = {
+          name: target.name,
+          email: target.email,
+          role: target.role,
+        };
+      }
+    }
+
+    if (performer) {
+      performedBySnapshot = {
+        name: performer.name,
+        email: performer.email,
+        role: performer.role,
+      };
+    }
+
+    return await this.create({
+      action,
+      targetUser,
+      targetJob,
+      targetUserSnapshot,
+      performedBy,
+      performedBySnapshot,
+      details,
+      context,
+    });
+  } catch (err) {
+    console.error("❌ Failed to record audit log:", err.message);
+  }
+};
+
+/* =====================================================
+   ✅ Model Export
+===================================================== */
+const AuditLog = mongoose.model("AuditLog", auditLogSchema);
+export default AuditLog;

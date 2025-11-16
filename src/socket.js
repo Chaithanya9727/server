@@ -1,27 +1,30 @@
+// src/socket.js
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import User from "./models/User.js";
 import Conversation from "./models/Conversation.js";
 import Message from "./models/Message.js";
+import Notification from "./models/Notification.js";
+import { setSocketInstance } from "./utils/notifyUser.js";
 
 const activeUsers = new Map(); // userId -> socketId
 
 export default function socketServer(httpServer) {
-  const allowedOrigins = [
-    // "https://onestop-frontend.netlify.app",
-    "http://localhost:5173",
-  ];
+  const allowedOrigins = ["http://localhost:5173"];
 
   const io = new Server(httpServer, {
     cors: {
       origin: allowedOrigins,
       credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE"],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     },
   });
 
+  // ✅ Make socket globally accessible (for utils/notifyUser.js)
+  setSocketInstance(io);
+
   /**
-   * ✅ Authenticate via JWT before connection
+   * 🔐 Authenticate each socket via JWT before connection
    */
   io.use(async (socket, next) => {
     try {
@@ -40,7 +43,7 @@ export default function socketServer(httpServer) {
   });
 
   /**
-   * ✅ On connection
+   * ✅ Handle new connection
    */
   io.on("connection", (socket) => {
     const userId = socket.user._id.toString();
@@ -49,9 +52,43 @@ export default function socketServer(httpServer) {
     console.log(`✅ ${socket.user.name} connected (${socket.user.role})`);
     io.emit("presence:update", { userId, online: true });
 
-    // =========================
-    // 💬 MESSAGE HANDLING
-    // =========================
+    // =====================================================
+    // 🔔 REAL-TIME NOTIFICATIONS
+    // =====================================================
+
+    // Join personal room for user-specific notifications
+    socket.join(userId);
+    console.log(`🔔 User joined room: ${userId}`);
+
+    // Listen for manual "notification:send" events (optional)
+    socket.on("notification:send", async (data) => {
+      try {
+        const { to, title, message, link, type = "system" } = data;
+        if (!to || !title || !message) return;
+
+        const notif = await Notification.create({
+          user: to,
+          title,
+          message,
+          link,
+          type,
+          read: false,
+        });
+
+        const targetSocket = activeUsers.get(to);
+        if (targetSocket) {
+          io.to(targetSocket).emit("notification:new", notif);
+        }
+
+        console.log(`📨 Real-time notification sent to ${to}: ${title}`);
+      } catch (err) {
+        console.error("❌ Notification send failed:", err);
+      }
+    });
+
+    // =====================================================
+    // 💬 MESSAGING
+    // =====================================================
 
     socket.on("message:send", async ({ conversationId, to, body }, cb) => {
       try {
@@ -75,9 +112,6 @@ export default function socketServer(httpServer) {
           .populate("from to", "name email avatar role")
           .lean();
 
-        populated.from = populated.from._id.toString();
-        populated.to = populated.to._id.toString();
-
         // 🎯 Emit to receiver
         const targetSocket = activeUsers.get(to);
         if (targetSocket) {
@@ -86,33 +120,17 @@ export default function socketServer(httpServer) {
           await Message.findByIdAndUpdate(msg._id, { status: "delivered" });
         }
 
-        // 🎯 Return to sender
         cb?.({ ok: true, message: populated });
-
-        // 📢 Broadcast a “new message alert” to all online admins/superadmins
-        const admins = await User.find({
-          role: { $in: ["admin", "superadmin"] },
-        }).select("_id");
-
-        for (const admin of admins) {
-          const socketId = activeUsers.get(admin._id.toString());
-          if (socketId && admin._id.toString() !== userId) {
-            io.to(socketId).emit("admin:message-alert", {
-              from: populated.from,
-              preview: body.slice(0, 60),
-              timestamp: new Date(),
-            });
-          }
-        }
       } catch (err) {
-        console.error("Send error:", err);
+        console.error("💥 Send error:", err);
         cb?.({ ok: false, error: "Send failed" });
       }
     });
 
-    // =========================
+    // =====================================================
     // 🧹 DELETE MESSAGE
-    // =========================
+    // =====================================================
+
     socket.on("message:delete", async ({ messageId, mode }, cb) => {
       try {
         const msg = await Message.findById(messageId);
@@ -153,14 +171,15 @@ export default function socketServer(httpServer) {
           cb?.({ ok: true });
         }
       } catch (err) {
-        console.error("Delete error:", err);
+        console.error("❌ Delete error:", err);
         cb?.({ ok: false, error: "Delete failed" });
       }
     });
 
-    // =========================
+    // =====================================================
     // ⌨️ TYPING INDICATOR
-    // =========================
+    // =====================================================
+
     socket.on("typing", ({ to, conversationId, typing }) => {
       const targetSocket = activeUsers.get(to);
       if (targetSocket) {
@@ -172,9 +191,10 @@ export default function socketServer(httpServer) {
       }
     });
 
-    // =========================
-    // 📋 MESSAGE STATUS
-    // =========================
+    // =====================================================
+    // 🧾 MESSAGE STATUS UPDATES
+    // =====================================================
+
     socket.on("message:mark", async ({ messageId, status }) => {
       try {
         const msg = await Message.findById(messageId);
@@ -191,13 +211,14 @@ export default function socketServer(httpServer) {
           }
         }
       } catch (err) {
-        console.error("Message mark error:", err);
+        console.error("❌ Message mark error:", err);
       }
     });
 
-    // =========================
+    // =====================================================
     // 🔌 DISCONNECT
-    // =========================
+    // =====================================================
+
     socket.on("disconnect", () => {
       activeUsers.delete(userId);
       io.emit("presence:update", { userId, online: false });
@@ -205,5 +226,8 @@ export default function socketServer(httpServer) {
     });
   });
 
+  console.log("⚙️ Socket.io initialized ✅");
   return io;
 }
+
+export { activeUsers };

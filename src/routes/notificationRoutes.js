@@ -1,21 +1,58 @@
+// src/routes/notificationRoutes.js
 import express from "express";
+import Notification from "../models/Notification.js";
 import { protect } from "../middleware/auth.js";
+import { notifyUser } from "../utils/notifyUser.js";
 
 const router = express.Router();
 
-/**
- * 🔔 Clear all notifications (for now just simulate)
- * Later you can extend this to mark them as "read" in DB
- */
-router.delete("/clear", protect, async (req, res) => {
+/* =====================================================
+   📬 Get Notifications (Authenticated)
+===================================================== */
+router.get("/", protect, async (req, res) => {
   try {
-    // ✅ If you want DB persistence later:
-    // await Notification.updateMany({ user: req.user._id }, { read: true });
-
-    res.json({ success: true, message: "Notifications cleared" });
+    const notifications = await Notification.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json({ count: notifications.length, notifications });
   } catch (err) {
-    console.error("Clear notifications error:", err);
-    res.status(500).json({ message: "Error clearing notifications" });
+    res.status(500).json({ message: "Failed to load notifications" });
+  }
+});
+
+/* =====================================================
+   📩 Mark all as read
+===================================================== */
+router.patch("/mark-read", protect, async (req, res) => {
+  try {
+    await Notification.updateMany({ user: req.user._id }, { $set: { read: true } });
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update notifications" });
+  }
+});
+
+/* =====================================================
+   🔔 Admin/Server Send Notification
+===================================================== */
+router.post("/send", async (req, res) => {
+  try {
+    const { userId, title, message, email } = req.body;
+    if (!userId || !title || !message)
+      return res.status(400).json({ message: "Missing fields" });
+
+    const notification = await notifyUser({
+      userId,
+      title,
+      message,
+      email,
+      sendEmailFlag: !!email,
+    });
+
+    res.status(201).json({ message: "Notification sent", notification });
+  } catch (err) {
+    console.error("Send notification error:", err);
+    res.status(500).json({ message: "Error sending notification" });
   }
 });
 
