@@ -46,6 +46,9 @@ import adminInsightsRoutes from "./routes/adminInsightsRoutes.js";
 // 📊 Analytics & Activity
 import statsRoutes from "./routes/stats.js";
 import activityRoutes from "./routes/activity.js";
+import auditRoutes from "./routes/auditRoutes.js";
+
+
 
 // 🆕 Recruiter Analytics (optional module)
 import recruiterAnalyticsRoutes from "./routes/recruiterAnalyticsRoutes.js";
@@ -124,6 +127,8 @@ app.use("/api/mentor", mentorRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/activity", activityRoutes);
 app.use("/api/admin", adminInsightsRoutes);
+app.use("/api/audit", auditRoutes);
+
 
 // 💼 Recruiter & Job System
 app.use("/api/recruiter", recruiterRoutes);
