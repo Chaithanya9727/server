@@ -71,7 +71,6 @@ router.post("/register-candidate", async (req, res) => {
 
 /* =====================================================
  🧳 REGISTER - Recruiter (Admin Approval Required)
-   NOTE: Supports both `/register-recruiter` and `/register-admin`
 ===================================================== */
 const registerRecruiterHandler = async (req, res) => {
   try {
@@ -101,7 +100,7 @@ const registerRecruiterHandler = async (req, res) => {
       password,
       mobile,
       role: "recruiter",
-      status: "pending", // requires admin approval
+      status: "pending",
       allowedRoles: ["recruiter"],
     });
 
@@ -119,7 +118,7 @@ const registerRecruiterHandler = async (req, res) => {
       "Recruiter Registration Received — OneStop Hub",
       `Hello ${recruiter.name},
 
-Thanks for registering as a recruiter for ${orgName || "your organization"}.
+Thanks for registering as a recruiter for ${orgName}.
 Your application is received and is currently under review.
 
 You'll be notified once an admin approves your access.
@@ -137,7 +136,6 @@ You'll be notified once an admin approves your access.
   }
 };
 
-// ✅ Both endpoints now point to same recruiter handler
 router.post("/register-recruiter", registerRecruiterHandler);
 router.post("/register-admin", registerRecruiterHandler);
 
@@ -174,8 +172,7 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
       `Hello ${admin.name},
 
 You have been added as an Admin.
-Your password: ${password}
-Please log in and change it immediately.
+Password: ${password}
 
 — OneStop Hub Team`
     );
@@ -188,59 +185,56 @@ Please log in and change it immediately.
 });
 
 /* =====================================================
- 🔐 LOGIN (Multi-role with Recruiter Status Gate)
+ 🔐 LOGIN — UPDATED, CLEANED, FIXED
 ===================================================== */
 router.post("/login", async (req, res) => {
   try {
-    const { email, password, selectedRole } = req.body;
+    const { email, password } = req.body;
 
-    if (!email || !password || !selectedRole)
+    // ❌ selectedRole removed
+    if (!email || !password) {
       return res.status(400).json({ message: "All fields are required" });
+    }
 
     const normalizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: normalizedEmail }).select("+password");
+
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-    const normalizedSelectedRole = selectedRole.toLowerCase();
-    const allowed = (user.allowedRoles || []).map((r) => r.toLowerCase());
+    // password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-    if (user.role.toLowerCase() !== normalizedSelectedRole && !allowed.includes(normalizedSelectedRole)) {
-      return res.status(403).json({
-        message: `You are registered as a ${user.role}. Please select '${user.role}' or another authorized role to log in.`,
-        allowedRoles: user.allowedRoles,
-      });
-    }
-
-    if (normalizedSelectedRole === "recruiter") {
+    // Recruiter approval check
+    if (user.role === "recruiter") {
       const status = (user.status || "").toLowerCase();
+
       if (status !== "approved") {
         return res.status(403).json({
           message:
             status === "rejected"
-              ? "Your recruiter access request was rejected."
-              : "Your recruiter application is pending admin approval.",
+              ? "Your recruiter application was rejected."
+              : "Your recruiter application is still awaiting admin approval.",
           status: user.status || "pending",
         });
       }
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
-
-    const token = generateToken(user._id, normalizedSelectedRole);
+    // Create JWT with DB role
+    const token = generateToken(user._id, user.role);
 
     await AuditLog.create({
       action: "LOGIN",
       performedBy: user._id,
       targetUser: user._id,
-      details: `User logged in as ${normalizedSelectedRole} (${user.email})`,
+      details: `User logged in as ${user.role} (${user.email})`,
     });
 
     res.json({
       _id: user._id,
       name: user.name,
       email: user.email,
-      role: normalizedSelectedRole,
+      role: user.role,
       token,
       message: `Welcome back, ${user.name} 👋`,
     });
@@ -263,12 +257,13 @@ router.get("/me", protect, async (req, res) => {
 });
 
 /* =====================================================
- 🔁 PASSWORD RESET (OTP)
+ 🔁 PASSWORD RESET — OTP
 ===================================================== */
 router.post("/send-otp", otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
     const normalizedEmail = (email || "").toLowerCase();
+
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -324,6 +319,7 @@ router.put("/reset-password", async (req, res) => {
 
     user.password = password;
     await user.save();
+
     await OTP.deleteMany({ email: normalizedEmail, purpose: "password-reset" });
 
     res.json({ message: "Password reset successfully ✅" });
@@ -344,6 +340,7 @@ router.post("/send-verification-otp", otpLimiter, async (req, res) => {
     if (exists) return res.status(400).json({ message: "User already registered" });
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
     await OTP.create({
       email: normalizedEmail,
       otp,
@@ -355,7 +352,7 @@ router.post("/send-verification-otp", otpLimiter, async (req, res) => {
     await sendEmail(
       normalizedEmail,
       "Verify Your Email - OneStop Hub",
-      `Your OneStop Hub verification code is: ${otp}\nValid for 5 minutes.`
+      `Your verification code is: ${otp}\nValid for 5 minutes.`
     );
 
     res.json({ message: "Verification OTP sent ✅" });
@@ -380,6 +377,7 @@ router.post("/verify-verification-otp", async (req, res) => {
 
     record.verified = true;
     await record.save();
+
     res.json({ success: true, message: "Email verified successfully ✅" });
   } catch {
     res.status(500).json({ message: "Error verifying email" });
