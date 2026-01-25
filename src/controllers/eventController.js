@@ -2,9 +2,11 @@
 import multer from "multer";
 import Event from "../models/Event.js";
 import Submission from "../models/Submission.js";
+import Application from "../models/Application.js";
+import Job from "../models/Job.js";
 import AuditLog from "../models/AuditLog.js";
 import cloudinary from "../utils/cloudinary.js";
-import { sendEmail } from "../utils/sendEmail.js";
+import { notifyUser } from "../utils/notifyUser.js";
 
 /* =====================================================
    📦 MULTER CONFIG (Memory Storage for Cloudinary)
@@ -83,6 +85,7 @@ export const createEvent = async (req, res) => {
       rules: parseMaybeJSON(body.rules, []),
       faqs: parseMaybeJSON(body.faqs, []),
       visibility: body.visibility || "public",
+      linkedJob: body.linkedJob || null,
       coverImage,
       createdBy: req.user._id,
     });
@@ -132,7 +135,9 @@ export const getEvents = async (req, res) => {
 // 🔍 Get Event by ID
 export const getEventById = async (req, res) => {
   try {
-    const event = await Event.findById(req.params.id).populate("createdBy", "name email role");
+    const event = await Event.findById(req.params.id)
+      .populate("createdBy", "name email role")
+      .populate("linkedJob", "title skills");
     if (!event) return res.status(404).json({ message: "Event not found" });
     res.json(event);
   } catch (err) {
@@ -164,6 +169,7 @@ export const updateEvent = async (req, res) => {
       "rules",
       "faqs",
       "visibility",
+      "linkedJob",
     ];
 
     updatable.forEach((k) => {
@@ -174,6 +180,8 @@ export const updateEvent = async (req, res) => {
           event[k] = parseMaybeJSON(body[k], event[k]);
         } else if (k === "maxTeamSize") {
           event[k] = Number(body[k]) || event[k];
+        } else if (k === "linkedJob") {
+          event[k] = body[k];
         } else {
           event[k] = body[k];
         }
@@ -271,17 +279,67 @@ export const registerForEvent = async (req, res) => {
 
     await event.save();
 
-    await sendEmail(
-      req.user.email,
-      `Registered: ${event.title}`,
-      `✅ You have successfully registered for "${event.title}".`
-    );
+    await notifyUser({
+      userId: req.user._id,
+      email: req.user.email,
+      title: "Event Registration Confirmed",
+      message: `You have successfully registered for "${event.title}".`,
+      link: `/events/${event._id}`,
+      type: "event",
+      emailEnabled: true,
+      emailSubject: `Registered: ${event.title}`
+    });
 
     await AuditLog.create({
       action: "REGISTER_EVENT",
       performedBy: req.user._id,
       details: `Registered for event "${event.title}" (${event._id})`,
     });
+
+    // 🔗 Auto-Apply to Linked Job (Hiring Challenge)
+    if (event.linkedJob) {
+      const job = await Job.findById(event.linkedJob);
+      if (job) {
+         const existingApp = await Application.findOne({ job: job._id, candidate: req.user._id });
+         if (!existingApp) {
+             // Calculate ATS Score
+             const userSkills = req.user.skills || [];
+             const jobSkills = job.skills || [];
+             let score = 50; 
+             let verdict = "Good";
+
+             if (jobSkills.length > 0) {
+                 const matchCount = jobSkills.filter(js => 
+                     userSkills.some(us => us.toLowerCase().includes(js.toLowerCase()))
+                 ).length;
+                 score = Math.round((matchCount / jobSkills.length) * 100);
+                 if (score >= 80) verdict = "Excellent";
+                 else if (score >= 50) verdict = "Good";
+                 else verdict = "Fair";
+             }
+
+             await Application.create({
+                 job: job._id,
+                 candidate: req.user._id,
+                 resumeUrl: req.user.resume, // Use profile resume
+                 status: "applied",
+                 atsScore: score,
+                 atsVerdict: verdict
+             });
+
+             // Notify User about Auto-Application
+             await notifyUser({
+                userId: req.user._id,
+                email: req.user.email,
+                title: "Auto-Applied to Job",
+                message: `Since you registered for "${event.title}", you have been auto-applied to the linked job: ${job.title}.`,
+                link: `/jobs/${job._id}`,
+                type: "job",
+                emailEnabled: false 
+             });
+         }
+      }
+    }
 
     res.status(201).json({ message: "Registration successful" });
   } catch (err) {
@@ -331,11 +389,16 @@ export const uploadSubmission = async (req, res) => {
     participant.lastUpdated = new Date();
     await event.save();
 
-    await sendEmail(
-      req.user.email,
-      `Submission Confirmed: ${event.title}`,
-      `Your submission for "${event.title}" has been received.`
-    );
+    await notifyUser({
+      userId: req.user._id,
+      email: req.user.email,
+      title: "Submission Received",
+      message: `Your entry for "${event.title}" has been received.`,
+      link: `/events/${event._id}`,
+      type: "event",
+      emailEnabled: true,
+      emailSubject: `Submission Confirmed: ${event.title}`
+    });
 
     await AuditLog.create({
       action: "SUBMIT_ENTRY",
@@ -391,6 +454,17 @@ export const evaluateSubmission = async (req, res) => {
       },
       { new: true, upsert: true }
     );
+
+    await notifyUser({
+      userId: userId,
+      email: participant.email, // Ensure participant object has email or fetch user
+      title: "Event Result Published",
+      message: `You scored ${participant.score} in "${event.title}". Feedback: ${feedback || 'None'}`,
+      link: `/leaderboard`, 
+      type: "result",
+      emailEnabled: true,
+      emailSubject: `Result: ${event.title}`
+    });
 
     await AuditLog.create({
       action: "EVALUATE_SUBMISSION",
@@ -523,5 +597,135 @@ export const eventAdminMetrics = async (_req, res) => {
   } catch (err) {
     console.error("eventAdminMetrics error:", err);
     res.status(500).json({ message: "Error fetching metrics" });
+  }
+};
+/* =====================================================
+   🎯 QUIZ CONTROLLER
+===================================================== */
+
+export const updateQuiz = async (req, res) => {
+  try {
+    const { id: eventId } = req.params;
+    const { questions, duration } = req.body;
+
+    const event = await Event.findById(eventId);
+    if (!event) return res.status(404).json({ message: "Event not found" });
+
+    event.quiz = {
+      questions,
+      duration: Number(duration) || 15
+    };
+
+    await event.save();
+    
+    await AuditLog.create({
+      action: "UPDATE_QUIZ",
+      performedBy: req.user._id,
+      details: `Updated quiz for event "${event.title}"`,
+    });
+
+    res.json({ message: "Quiz updated successfully", quiz: event.quiz });
+  } catch (err) {
+    console.error("UpdateQuiz error:", err);
+    res.status(500).json({ message: "Error updating quiz" });
+  }
+};
+
+export const getQuiz = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id).lean();
+    if (!event) return res.status(404).json({ message: "Event not found" });
+
+    // Sanitize: Hide correctOption
+    const sanitizedQuestions = event.quiz?.questions?.map(q => ({
+      _id: q._id,
+      question: q.question,
+      options: q.options,
+      marks: q.marks
+    })) || [];
+
+    res.json({
+      duration: event.quiz?.duration || 15,
+      questions: sanitizedQuestions
+    });
+  } catch (err) {
+    console.error("GetQuiz error:", err);
+    res.status(500).json({ message: "Error fetching quiz" });
+  }
+};
+
+export const submitQuiz = async (req, res) => {
+  try {
+    const { id: eventId } = req.params;
+    const { answers, violationCount, terminationReason } = req.body; 
+
+    const event = await Event.findById(eventId);
+    if (!event) return res.status(404).json({ message: "Event not found" });
+
+    const participant = event.participants.find(p => String(p.userId) === String(req.user._id));
+    if (!participant) return res.status(403).json({ message: "User not registered for this event" });
+
+    // Auto-grading
+    let totalScore = 0;
+    let maxScore = 0;
+    
+    event.quiz.questions.forEach(q => {
+       maxScore += q.marks;
+       const userAns = answers?.[q._id];
+       // Check if answer matches correctOption
+       if (userAns !== undefined && Number(userAns) === Number(q.correctOption)) {
+          totalScore += q.marks;
+       }
+    });
+
+    // Update Event Participant
+    participant.score = totalScore;
+    participant.submissionStatus = "submitted";
+    participant.round = 1; // Completed
+    participant.lastUpdated = new Date();
+    
+    await event.save();
+
+    // Update Submission Record (for consistency)
+    await Submission.findOneAndUpdate(
+       { event: eventId, user: req.user._id },
+       {
+          event: eventId,
+          user: req.user._id,
+          teamName: participant.teamName,
+          finalScore: totalScore, 
+          status: "reviewed", 
+          submissionLink: terminationReason ? `Terminated: ${terminationReason}` : "Quiz Auto-Submission", 
+          fileUrl: "",
+       },
+       { upsert: true, new: true }
+    );
+
+    // Audit Log
+    let logMsg = `Submitted quiz for "${event.title}". Score: ${totalScore}/${maxScore}`;
+    if (violationCount > 0) logMsg += `. Violations: ${violationCount}`;
+    if (terminationReason) logMsg += ` [TERMINATED: ${terminationReason}]`;
+
+    await AuditLog.create({
+      action: "SUBMIT_QUIZ",
+      performedBy: req.user._id,
+      details: logMsg,
+    });
+
+    await notifyUser({
+      userId: req.user._id,
+      email: req.user.email,
+      title: "Quiz Completed",
+      message: `You scored ${totalScore}/${maxScore} in "${event.title}".`,
+      link: `/leaderboard`,
+      type: "result",
+      emailEnabled: true,
+      emailSubject: `Quiz Result: ${event.title}`
+    });
+
+    res.json({ score: totalScore, maxScore, message: "Quiz submitted successfully" });
+  } catch(err) {
+      console.error("SubmitQuiz error:", err);
+      res.status(500).json({ message: "Quiz submission failed" });
   }
 };

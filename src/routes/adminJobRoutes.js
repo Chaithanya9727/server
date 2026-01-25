@@ -48,7 +48,8 @@ router.patch("/jobs/:id/approve", protect, authorize(["admin", "superadmin"]), a
     );
 
     // 🔔 In-App Notification
-    await notifyUser(job.postedBy._id, {
+    await notifyUser({
+      userId: job.postedBy._id,
       title: "Job Approved ✅",
       message: `Your job "${job.title}" has been approved and is now visible to candidates.`,
       type: "job",
@@ -87,7 +88,8 @@ router.patch("/jobs/:id/close", protect, authorize(["admin", "superadmin"]), asy
     );
 
     // 🔔 In-App Notification
-    await notifyUser(job.postedBy._id, {
+    await notifyUser({
+      userId: job.postedBy._id,
       title: "Job Closed ⚠️",
       message: `Your job "${job.title}" has been closed by admin.`,
       type: "job",
@@ -120,7 +122,8 @@ router.post("/jobs/:id/notify-candidate", protect, authorize(["admin", "superadm
     );
 
     // 🔔 In-App Notification
-    await notifyUser(candidate._id, {
+    await notifyUser({
+      userId: candidate._id,
       title: "Job Application Update 📩",
       message: message || `Your application for "${job.title}" has been updated.`,
       type: "candidate",
@@ -130,6 +133,36 @@ router.post("/jobs/:id/notify-candidate", protect, authorize(["admin", "superadm
   } catch (err) {
     console.error("Notify candidate error:", err);
     res.status(500).json({ message: "Error notifying candidate" });
+  }
+});
+
+/* =====================================================
+   🗑️ Delete Job (SuperAdmin Only)
+      PERMANENTLY DELETE FROM DATABASE
+===================================================== */
+router.delete("/jobs/:id", protect, authorize(["superadmin"]), async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    const jobTitle = job.title;
+    const postedBy = job.postedBy;
+
+    // Permanently Delete
+    await Job.findByIdAndDelete(req.params.id);
+
+    // Audit Log
+    await AuditLog.create({
+      action: "DELETE_JOB",
+      performedBy: req.user._id,
+      targetUser: postedBy,
+      details: `Job "${jobTitle}" permanently deleted by SuperAdmin`,
+    });
+
+    res.json({ message: "Job permanently deleted along with all applications." });
+  } catch (err) {
+    console.error("Delete job error:", err);
+    res.status(500).json({ message: "Error deleting job" });
   }
 });
 

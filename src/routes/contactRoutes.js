@@ -1,5 +1,6 @@
 import express from "express";
 import Contact from "../models/Contact.js";
+import User from "../models/User.js";
 import { protect } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { sendEmail } from "../utils/sendEmail.js";
@@ -27,23 +28,36 @@ router.post("/", async (req, res) => {
       createdAt: new Date(),
     });
 
-    // ✉️ Send notification email to admin
-    await sendEmail(
-      process.env.EMAIL_USER,
-      `📩 New Contact Message from ${name}`,
-      `From: ${name} <${email}>\n\nSubject: ${subject}\n\nMessage:\n${message}`
-    );
+    // 🕵️ Find SuperAdmins to notify
+    const superAdmins = await User.find({ role: "superadmin" }).select("email");
+    const superAdminEmails = superAdmins.map(u => u.email).filter(e => e);
+
+    // ✉️ Send notification email to all superadmins
+    if (superAdminEmails.length > 0) {
+      await sendEmail(
+        superAdminEmails, // Array of emails
+        `📩 New Feedback/Contact from ${name}`,
+        `From: ${name} <${email}>\n\nSubject: ${subject}\n\nMessage:\n${message}\n\n(Sent via OneStop Hub Contact Form)`
+      );
+    } else {
+       // Fallback to Env Email user if no superadmin found in DB
+       await sendEmail(
+        process.env.EMAIL_USER,
+        `📩 New Feedback/Contact from ${name}`,
+        `From: ${name} <${email}>\n\nSubject: ${subject}\n\nMessage:\n${message}`
+      );
+    }
 
     // 🤖 Auto-reply to sender
     await sendEmail(
       email,
-      `Thanks for contacting OneStop Hub!`,
-      `Hi ${name},\n\nWe've received your message regarding "${subject}".\nOur team will get back to you soon.\n\nBest regards,\nThe OneStop Hub Team`
+      `We received your feedback - OneStop Hub`,
+      `Hi ${name},\n\nThank you for reaching out! We've received your feedback/message regarding "${subject}".\nOur SuperAdmin team has been notified and will review it smoothly.\n\nBest regards,\nThe OneStop Hub Team`
     );
 
     res.status(201).json({
       success: true,
-      message: "Message sent successfully! Our team will contact you soon.",
+      message: "Feedback sent successfully to SuperAdmins!",
       data: newMsg,
     });
   } catch (err) {
@@ -153,6 +167,31 @@ router.delete("/:id", protect, authorize(["admin"]), async (req, res) => {
   } catch (err) {
     console.error("Error deleting message:", err);
     res.status(500).json({ message: "Error deleting message" });
+  }
+});
+
+/* =====================================================
+   🔒 ADMIN — Bulk Delete messages
+===================================================== */
+router.post("/bulk/delete", protect, authorize(["superadmin"]), async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: "No IDs provided" });
+    }
+
+    await Contact.deleteMany({ _id: { $in: ids } });
+
+    await AuditLog.create({
+      action: "BULK_DELETE_MESSAGES",
+      performedBy: req.user._id,
+      details: `Deleted ${ids.length} contact messages`,
+    });
+
+    res.json({ message: `Deleted ${ids.length} messages successfully ✅` });
+  } catch (err) {
+    console.error("Error bulk deleting messages:", err);
+    res.status(500).json({ message: "Error deleting messages" });
   }
 });
 

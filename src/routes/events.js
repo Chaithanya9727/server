@@ -14,6 +14,9 @@ import {
   listMyRegistrations,
   eventAdminMetrics,
   upload,
+  updateQuiz,
+  getQuiz,
+  submitQuiz,
 } from "../controllers/eventController.js";
 
 import { protect } from "../middleware/auth.js";
@@ -36,7 +39,7 @@ const router = express.Router();
 router.get(
   "/:eventId/registrations",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   getEventRegistrations
 );
 
@@ -52,7 +55,7 @@ router.get(
 router.post(
   "/",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   upload.single("cover"), // optional banner image
   createEvent
 );
@@ -79,7 +82,7 @@ router.get("/:id", getEventById);
 router.put(
   "/:id",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   upload.single("cover"),
   updateEvent
 );
@@ -92,7 +95,7 @@ router.put(
 router.delete(
   "/:id",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   deleteEvent
 );
 
@@ -122,7 +125,7 @@ router.post("/:id/submit", protect, upload.single("file"), uploadSubmission);
 router.post(
   "/:id/evaluate",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   evaluateSubmission
 );
 
@@ -152,7 +155,7 @@ router.get("/registrations/me", protect, listMyRegistrations);
 router.get(
   "/admin/metrics",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   eventAdminMetrics
 );
 
@@ -164,7 +167,7 @@ router.get(
 router.get(
   "/:id/submissions",
   protect,
-  authorize(["admin", "mentor", "superadmin"]),
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
   listSubmissionsForEvent
 );
 
@@ -196,6 +199,40 @@ router.delete(
       res.status(500).json({ message: "Error bulk deleting events" });
     }
   }
+);
+
+/* =====================================================
+   ❓ QUIZ ROUTES
+===================================================== */
+
+/**
+ * @route   PUT /api/events/:id/quiz
+ * @desc    Add/Update quiz questions
+ * @access  Admin / Mentor
+ */
+router.put(
+  "/:id/quiz",
+  protect,
+  authorize(["admin", "mentor", "superadmin", "recruiter"]),
+  updateQuiz
+);
+
+/**
+ * @route   GET /api/events/:id/quiz
+ * @desc    Get quiz questions (without answers)
+ * @access  Public / Registered
+ */
+router.get("/:id/quiz", protect, getQuiz);
+
+/**
+ * @route   POST /api/events/:id/quiz/submit
+ * @desc    Submit quiz answers and auto-grade
+ * @access  Registered users
+ */
+router.post(
+  "/:id/quiz/submit",
+  protect,
+  submitQuiz
 );
 
 export default router;

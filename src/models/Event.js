@@ -21,6 +21,16 @@ const imageSchema = new mongoose.Schema(
 );
 
 /* =====================================================
+   ❓ QUIZ QUESTION SUB-SCHEMA
+===================================================== */
+const quizQuestionSchema = new mongoose.Schema({
+  question: { type: String, required: true },
+  options: [{ type: String, required: true }], 
+  correctOption: { type: Number, required: true }, // Index 0-3
+  marks: { type: Number, default: 1 }
+}, { _id: true });
+
+/* =====================================================
    👥 PARTICIPANT SUB-SCHEMA
 ===================================================== */
 const participantSchema = new mongoose.Schema(
@@ -65,6 +75,9 @@ const eventSchema = new mongoose.Schema(
     location: { type: String, default: "Online" },
     coverImage: imageSchema,
 
+    // 🔗 Linked Hiring Opportunity (Hybrid Event)
+    linkedJob: { type: mongoose.Schema.Types.ObjectId, ref: "Job" },
+
     // Dates
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
@@ -75,6 +88,12 @@ const eventSchema = new mongoose.Schema(
     prizes: [{ type: String }],
     rules: [{ type: String }],
     faqs: [faqSchema],
+    
+    // Quiz Config
+    quiz: {
+      questions: [quizQuestionSchema],
+      duration: { type: Number, default: 15 } // minutes
+    },
 
     // Visibility
     visibility: { type: String, enum: ["public", "private"], default: "public" },

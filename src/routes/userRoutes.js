@@ -51,6 +51,8 @@ router.put("/me", protect, async (req, res) => {
     user.email = req.body.email || user.email;
     user.mobile = req.body.mobile || user.mobile;
     if (req.body.mentorProfile) user.mentorProfile = req.body.mentorProfile;
+    if (req.body.skills) user.skills = req.body.skills;
+    if (req.body.openToTeaming !== undefined) user.openToTeaming = req.body.openToTeaming;
 
     const updated = await user.save();
     res.json(updated);
@@ -115,6 +117,20 @@ router.put("/me/avatar", protect, upload.single("file"), async (req, res) => {
    👑 USER MANAGEMENT (Admin + SuperAdmin)
 ===================================================== */
 
+// ✅ Get Global Leaderboard
+router.get("/leaderboard", protect, async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select("name avatar points role")
+      .sort({ points: -1 })
+      .limit(50);
+    res.json(users);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error fetching leaderboard" });
+  }
+});
+
 // ✅ Get all users
 router.get("/", protect, authorize(["admin", "superadmin"]), async (req, res) => {
   try {
@@ -135,8 +151,8 @@ router.get("/", protect, authorize(["admin", "superadmin"]), async (req, res) =>
   }
 });
 
-// ✅ Create Admin
-router.post("/create-admin", protect, authorize(["admin", "superadmin"]), async (req, res) => {
+// ✅ Create Admin (SuperAdmin)
+router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res) => {
   try {
     const { name, email, password, mobile } = req.body;
     if (!name || !email || !password)
@@ -150,7 +166,7 @@ router.post("/create-admin", protect, authorize(["admin", "superadmin"]), async 
       email,
       password,
       mobile,
-      role: "admin",
+      role: "superadmin",
     });
 
     await AuditLog.create({

@@ -23,7 +23,7 @@ router.get("/", protect, async (req, res) => {
 /* =====================================================
    📩 Mark all as read
 ===================================================== */
-router.patch("/mark-read", protect, async (req, res) => {
+router.patch("/mark-all/read", protect, async (req, res) => {
   try {
     await Notification.updateMany({ user: req.user._id }, { $set: { read: true } });
     res.json({ message: "All notifications marked as read" });

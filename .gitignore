@@ -5,3 +5,7 @@
 *.env
 .env.local
 
+# Secrets
+firebase.json
+**/firebase.json
+Placements/backend/firebase.json

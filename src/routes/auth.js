@@ -25,7 +25,8 @@ const otpLimiter = rateLimit({
   windowMs: 30 * 1000,
   max: 1,
   message: { message: "Please wait 30 seconds before requesting another OTP." },
-  keyGenerator: (req) => req.body?.email || req.ip,
+  keyGenerator: (req) => req.body?.email || req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+  validate: { ip: false },
 });
 
 /* =====================================================

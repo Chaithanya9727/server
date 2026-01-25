@@ -69,7 +69,8 @@ You can now access the Recruiter Dashboard.
       );
 
       // 🔔 In-app notification
-      await notifyUser(recruiter._id, {
+      await notifyUser({
+        userId: recruiter._id,
         title: "Recruiter Account Approved 🎉",
         message: "Your recruiter account has been approved by admin. You can now post jobs.",
         type: "recruiter",
@@ -118,7 +119,8 @@ For more details, contact support.
       );
 
       // 🔔 In-app notification
-      await notifyUser(recruiter._id, {
+      await notifyUser({
+        userId: recruiter._id,
         title: "Recruiter Application Rejected",
         message: "Your recruiter request was rejected by admin. Please contact support for assistance.",
         type: "recruiter",

@@ -28,6 +28,11 @@ const jobSchema = new mongoose.Schema(
       default: "pending",
     },
 
+    source: {
+      type: String,
+      default: "OneStop", // "OneStop" for internal, others like "LinkedIn", "Jobicy" for external
+    },
+
     visibility: {
       type: String,
       enum: ["public", "private"],

@@ -14,14 +14,19 @@ const userSchema = new mongoose.Schema(
     companyWebsite: { type: String, default: "" },
     companyDescription: { type: String, default: "" },
 
+    /* 🛠 Skills (for Auto-Matching) */
+    skills: [{ type: String, trim: true }],
+    openToTeaming: { type: Boolean, default: false },
+
     /* 🧩 Roles */
     role: {
       type: String,
-      enum: ["candidate", "mentor", "recruiter", "admin", "superadmin", "guest"],
+      enum: ["candidate", "mentor", "recruiter", "superadmin", "guest"],
       default: "candidate",
       lowercase: true,
       trim: true,
     },
+    points: { type: Number, default: 0 },
     allowedRoles: {
       type: [String],
       default: [],
@@ -55,6 +60,22 @@ const userSchema = new mongoose.Schema(
       expertise: { type: String, default: "" },
       experience: { type: Number, default: 0 },
       bio: { type: String, default: "" },
+      company: { type: String, default: "" },
+      services: [
+        {
+          title: { type: String, required: true },
+          type: { type: String, enum: ["1:1 Call", "Resume Review", "Mock Interview", "Text Query"], required: true },
+          price: { type: Number, default: 0 },
+          duration: { type: Number, default: 30 }, // in minutes
+          description: { type: String, default: "" },
+        }
+      ],
+      availability: [
+        {
+          day: { type: String, required: true }, // e.g., "Monday"
+          slots: [{ type: String }] // e.g., ["10:00 AM", "11:00 AM"]
+        }
+      ]
     },
     mentorRequested: { type: Boolean, default: false },
     mentorApproved: { type: Boolean, default: false },

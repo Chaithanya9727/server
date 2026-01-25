@@ -8,15 +8,21 @@ import Application from "../models/Application.js";
 import AuditLog from "../models/AuditLog.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { notifyUser } from "../utils/notifyUser.js";
+import axios from "axios";
+import { performAnalysis } from "../utils/atsUtils.js";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const pdf = require("pdf-parse");
 
 const router = express.Router();
 
 /* =====================================================
-   💼 Recruiter — Create Job
+   💼 Recruiter — Create Job (POST /api/recruiter/jobs)
 ===================================================== */
 router.post("/jobs", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const { title, description, skills, location, salary } = req.body;
+    const { title, description, skills = [], location, salary, type } = req.body;
 
     const job = await Job.create({
       title,
@@ -24,6 +30,7 @@ router.post("/jobs", protect, authorize(["recruiter"]), async (req, res) => {
       skills,
       location,
       salary,
+      type,
       postedBy: req.user._id,
       status: "pending",
     });
@@ -35,33 +42,23 @@ router.post("/jobs", protect, authorize(["recruiter"]), async (req, res) => {
       details: `Recruiter ${req.user.email} created job "${title}"`,
     });
 
-    res
-      .status(201)
-      .json({ message: "Job created successfully and pending admin approval ✅", job });
+    res.status(201).json({
+      message: "Job created successfully and pending admin approval ✅",
+      job,
+    });
   } catch (err) {
     console.error("Error creating job:", err);
-    res.status(500).json({ message: "Error creating job" });
+    res.status(500).json({ message: "Error creating job", error: err.message });
   }
 });
 
 /* =====================================================
-   🧾 Recruiter — Get My Jobs (and alias /jobs)
+   📦 Recruiter — Get all My Jobs (GET /api/recruiter/jobs)
 ===================================================== */
-router.get("/my-jobs", protect, authorize(["recruiter"]), async (req, res) => {
-  try {
-    const jobs = await Job.find({ postedBy: req.user._id }).sort({ createdAt: -1 });
-    res.json(jobs);
-  } catch (err) {
-    console.error("Error fetching recruiter jobs:", err);
-    res.status(500).json({ message: "Error fetching jobs" });
-  }
-});
-
-// alias to match frontend calling /api/recruiter/jobs
 router.get("/jobs", protect, authorize(["recruiter"]), async (req, res) => {
   try {
     const jobs = await Job.find({ postedBy: req.user._id }).sort({ createdAt: -1 });
-    res.json(jobs);
+    res.json({ jobs });
   } catch (err) {
     console.error("Error fetching recruiter jobs:", err);
     res.status(500).json({ message: "Error fetching jobs" });
@@ -69,20 +66,128 @@ router.get("/jobs", protect, authorize(["recruiter"]), async (req, res) => {
 });
 
 /* =====================================================
-   📋 Recruiter — View Applications for a Job
+   📄 Recruiter — Get Single Job (GET /api/recruiter/jobs/:id)
+===================================================== */
+router.get("/jobs/:id", protect, authorize(["recruiter"]), async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
+
+    res.json({ job });
+  } catch (err) {
+    console.error("Error fetching job:", err);
+    res.status(500).json({ message: "Error fetching job" });
+  }
+});
+
+/* =====================================================
+   ✏️ Recruiter — Update Job (PATCH /api/recruiter/jobs/:id)
+===================================================== */
+router.patch("/jobs/:id", protect, authorize(["recruiter"]), async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
+
+    const allowedFields = ["title", "description", "skills", "location", "salary", "type", "status"];
+
+    allowedFields.forEach((field) => {
+      if (req.body[field] !== undefined) job[field] = req.body[field];
+    });
+
+    await job.save();
+
+    await AuditLog.create({
+      action: "UPDATE_JOB",
+      performedBy: req.user._id,
+      targetUser: req.user._id,
+      details: `Recruiter ${req.user.email} updated job "${job.title}" (${job._id})`,
+    });
+
+    res.json({ message: "Job updated successfully", job });
+  } catch (err) {
+    console.error("Error updating job:", err);
+    res.status(500).json({ message: "Error updating job" });
+  }
+});
+
+/* =====================================================
+   🔁 Recruiter — Change Job Status (PATCH /jobs/:id/status)
+===================================================== */
+router.patch("/jobs/:id/status", protect, authorize(["recruiter"]), async (req, res) => {
+  try {
+    const { status } = req.body;
+    const allowed = ["active", "pending", "closed", "archived"];
+
+    if (!allowed.includes(status))
+      return res.status(400).json({ message: "Invalid status value" });
+
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
+
+    job.status = status;
+    await job.save();
+
+    await AuditLog.create({
+      action: "UPDATE_JOB_STATUS",
+      performedBy: req.user._id,
+      targetUser: req.user._id,
+      details: `Job "${job.title}" status changed to ${status}`,
+    });
+
+    res.json({ message: "Status updated", job });
+  } catch (err) {
+    console.error("Error updating job status:", err);
+    res.status(500).json({ message: "Error updating job status" });
+  }
+});
+
+/* =====================================================
+   🗑 Recruiter — Delete Job (DELETE /jobs/:id)
+===================================================== */
+router.delete("/jobs/:id", protect, authorize(["recruiter"]), async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
+
+    await job.deleteOne();
+
+    await AuditLog.create({
+      action: "DELETE_JOB",
+      performedBy: req.user._id,
+      targetUser: req.user._id,
+      details: `Recruiter ${req.user.email} deleted job "${job.title}" (${job._id})`,
+    });
+
+    res.json({ message: "Job deleted" });
+  } catch (err) {
+    console.error("Error deleting job:", err);
+    res.status(500).json({ message: "Error deleting job" });
+  }
+});
+
+/* =====================================================
+   📋 Recruiter — View Applications of a Job
 ===================================================== */
 router.get("/jobs/:id/applications", protect, authorize(["recruiter"]), async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
 
-    if (job.postedBy.toString() !== req.user._id.toString())
-      return res.status(403).json({ message: "Not authorized to view this job’s applications" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
 
-    const applications = await Application.find({ job: job._id }).populate(
-      "candidate",
-      "name email"
-    );
+    const applications = await Application.find({ job: job._id })
+      .populate("candidate", "name email")
+      .sort({ createdAt: -1 });
+
     res.json(applications);
   } catch (err) {
     console.error("Error fetching applications:", err);
@@ -95,10 +200,11 @@ router.get("/jobs/:id/applications", protect, authorize(["recruiter"]), async (r
 ===================================================== */
 router.patch("/applications/:id/status", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, customMessage } = req.body;
     const validStatuses = ["shortlisted", "rejected", "hired"];
+
     if (!validStatuses.includes(status))
-      return res.status(400).json({ message: "Invalid application status" });
+      return res.status(400).json({ message: "Invalid status" });
 
     const application = await Application.findById(req.params.id)
       .populate("candidate", "name email")
@@ -107,46 +213,50 @@ router.patch("/applications/:id/status", protect, authorize(["recruiter"]), asyn
     if (!application) return res.status(404).json({ message: "Application not found" });
 
     const job = application.job;
-    if (job.postedBy.toString() !== req.user._id.toString())
-      return res.status(403).json({ message: "Not authorized to modify this application" });
+    if (String(job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
 
     application.status = status;
     await application.save();
+
+    // Email + Notification
+    let subject = "";
+    let baseBody = "";
+
+    if (status === "shortlisted") {
+      subject = "🎯 Application Shortlisted - OneStop Hub";
+      baseBody = `Hello ${application.candidate.name},\n\nYour application for "${job.title}" has been shortlisted!`;
+    } else if (status === "rejected") {
+      subject = "❌ Application Update - OneStop Hub";
+      baseBody = `Hello ${application.candidate.name},\n\nYour application for "${job.title}" was not shortlisted.`;
+    } else if (status === "hired") {
+      subject = "🎉 Congratulations! You're Hired - OneStop Hub";
+      baseBody = `Hello ${application.candidate.name},\n\nYou have been hired for "${job.title}".`;
+    }
+
+    // Append custom message if provided
+    let finalBody = baseBody;
+    if (customMessage) {
+      finalBody += `\n\nNote from Recruiter:\n"${customMessage}"`;
+    }
+    finalBody += "\n\n— OneStop Hub";
+
+    await sendEmail(application.candidate.email, subject, finalBody);
+    await notifyUser({
+      userId: application.candidate._id,
+      title: subject,
+      message: customMessage || baseBody.replace(/\n/g, " "),
+      type: "candidate",
+    });
 
     await AuditLog.create({
       action: "UPDATE_APPLICATION_STATUS",
       performedBy: req.user._id,
       targetUser: application.candidate._id,
-      details: `Application for job "${job.title}" marked as ${status} by recruiter`,
+      details: `Application for "${job.title}" marked as ${status}`,
     });
 
-    // ✉️ Send Email + Notify Candidate
-    let emailSubject = "";
-    let emailBody = "";
-
-    switch (status) {
-      case "shortlisted":
-        emailSubject = "🎯 Application Shortlisted - OneStop Hub";
-        emailBody = `Hello ${application.candidate.name},\n\nYour application for "${job.title}" has been shortlisted! The recruiter may contact you soon.\n\n— Team OneStop Hub`;
-        break;
-      case "rejected":
-        emailSubject = "❌ Application Update - OneStop Hub";
-        emailBody = `Hello ${application.candidate.name},\n\nUnfortunately, your application for "${job.title}" was not shortlisted.\nKeep applying — opportunities await!\n\n— Team OneStop Hub`;
-        break;
-      case "hired":
-        emailSubject = "🎉 Congratulations! You're Hired - OneStop Hub";
-        emailBody = `Hello ${application.candidate.name},\n\nCongratulations! You have been hired for "${job.title}".\nThe recruiter will reach out soon.\n\n— Team OneStop Hub`;
-        break;
-    }
-
-    await sendEmail(application.candidate.email, emailSubject, emailBody);
-    await notifyUser(application.candidate._id, {
-      title: emailSubject,
-      message: emailBody.replace(/\n/g, " "),
-      type: "candidate",
-    });
-
-    res.json({ message: `Application status updated to "${status}" ✅`, application });
+    res.json({ message: `Status updated to ${status}`, application });
   } catch (err) {
     console.error("Error updating application status:", err);
     res.status(500).json({ message: "Error updating application status" });
@@ -154,28 +264,29 @@ router.patch("/applications/:id/status", protect, authorize(["recruiter"]), asyn
 });
 
 /* =====================================================
-   💬 Recruiter — Notify Candidate Manually
+   💬 Notify Candidate (manual)
 ===================================================== */
 router.post("/applications/:id/notify", protect, authorize(["recruiter"]), async (req, res) => {
   try {
     const { message } = req.body;
+
     const application = await Application.findById(req.params.id)
       .populate("candidate", "name email")
       .populate("job", "title postedBy");
 
     if (!application) return res.status(404).json({ message: "Application not found" });
-    const job = application.job;
-    if (job.postedBy.toString() !== req.user._id.toString())
+
+    if (String(application.job.postedBy) !== String(req.user._id))
       return res.status(403).json({ message: "Not authorized" });
 
     await sendEmail(
       application.candidate.email,
-      `Message Regarding "${job.title}"`,
-      `Hello ${application.candidate.name},\n\n${message}\n\n— ${req.user.name} (Recruiter)`
+      `Message Regarding "${application.job.title}"`,
+      `Hello ${application.candidate.name},\n\n${message}\n\n— ${req.user.name}`
     );
-
-    await notifyUser(application.candidate._id, {
-      title: `New Message from Recruiter`,
+    await notifyUser({
+      userId: application.candidate._id,
+      title: "New Message from Recruiter",
       message,
       type: "candidate",
     });
@@ -184,10 +295,10 @@ router.post("/applications/:id/notify", protect, authorize(["recruiter"]), async
       action: "NOTIFY_CANDIDATE",
       performedBy: req.user._id,
       targetUser: application.candidate._id,
-      details: `Recruiter ${req.user.email} sent a custom message regarding "${job.title}"`,
+      details: `Recruiter messaged about "${application.job.title}"`,
     });
 
-    res.json({ message: "Candidate notified successfully 📩" });
+    res.json({ message: "Candidate notified" });
   } catch (err) {
     console.error("Error notifying candidate:", err);
     res.status(500).json({ message: "Error notifying candidate" });
@@ -195,80 +306,78 @@ router.post("/applications/:id/notify", protect, authorize(["recruiter"]), async
 });
 
 /* =====================================================
-   ⚙️ Recruiter — Profile Management (/rpanel/profile)
+   ⚙ Recruiter Profile (GET & PATCH)
 ===================================================== */
 router.get("/rpanel/profile", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const recruiter = await User.findById(req.user._id).select(
+    const user = await User.findById(req.user._id).select(
       "name email mobile orgName avatar companyWebsite companyDescription"
     );
-    if (!recruiter) return res.status(404).json({ message: "Recruiter not found" });
-    res.json(recruiter);
+
+    res.json(user);
   } catch (err) {
-    console.error("Error fetching recruiter profile:", err);
-    res.status(500).json({ message: "Error fetching recruiter profile" });
+    console.error("Error fetching profile:", err);
+    res.status(500).json({ message: "Error fetching profile" });
   }
 });
 
 router.patch("/rpanel/profile", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const updates = (({
-      name,
-      mobile,
-      orgName,
-      avatar,
-      companyWebsite,
-      companyDescription,
-    }) => ({
-      name,
-      mobile,
-      orgName,
-      avatar,
-      companyWebsite,
-      companyDescription,
-    }))(req.body);
+    const updates = {
+      name: req.body.name,
+      mobile: req.body.mobile,
+      orgName: req.body.orgName,
+      avatar: req.body.avatar,
+      companyWebsite: req.body.companyWebsite,
+      companyDescription: req.body.companyDescription,
+    };
 
-    const recruiter = await User.findByIdAndUpdate(req.user._id, updates, {
+    const updated = await User.findByIdAndUpdate(req.user._id, updates, {
       new: true,
-      runValidators: true,
-      select: "name email mobile orgName avatar companyWebsite companyDescription",
+      select:
+        "name email mobile orgName avatar companyWebsite companyDescription",
     });
 
     await AuditLog.create({
       action: "UPDATE_RECRUITER_PROFILE",
       performedBy: req.user._id,
       targetUser: req.user._id,
-      details: `Recruiter ${req.user.email} updated profile details`,
+      details: "Recruiter updated profile",
     });
 
-    res.json({ message: "Profile updated successfully ✅", recruiter });
+    res.json({ message: "Profile updated successfully", recruiter: updated });
   } catch (err) {
-    console.error("Error updating recruiter profile:", err);
+    console.error("Error updating profile:", err);
     res.status(500).json({ message: "Error updating recruiter profile" });
   }
 });
 
 /* =====================================================
-   📊 Recruiter — Analytics & Overview
+   📊 Analytics (GET /api/recruiter/analytics)
 ===================================================== */
 router.get("/analytics", protect, authorize(["recruiter"]), async (req, res) => {
   try {
     const jobs = await Job.find({ postedBy: req.user._id }).select("_id");
-    const jobIds = jobs.map(j => j._id);
+    const jobIds = jobs.map((j) => j._id);
 
-    const countsAgg = await Application.aggregate([
+    const countAgg = await Application.aggregate([
       { $match: { job: { $in: jobIds } } },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
     ]);
 
     const counts = { applied: 0, shortlisted: 0, rejected: 0, hired: 0 };
-    countsAgg.forEach(r => (counts[r._id] = r.count || 0));
+    countAgg.forEach((c) => (counts[c._id] = c.count));
 
-    const last7Days = new Date();
-    last7Days.setDate(last7Days.getDate() - 7);
+    const last7 = new Date();
+    last7.setDate(last7.getDate() - 7);
 
-    const trendAgg = await Application.aggregate([
-      { $match: { job: { $in: jobIds }, createdAt: { $gte: last7Days } } },
+    const trendsAgg = await Application.aggregate([
+      { $match: { job: { $in: jobIds }, createdAt: { $gte: last7 } } },
       {
         $group: {
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
@@ -278,68 +387,114 @@ router.get("/analytics", protect, authorize(["recruiter"]), async (req, res) => 
       { $sort: { _id: 1 } },
     ]);
 
-    const trends = trendAgg.map(t => ({ date: t._id, applications: t.applications }));
-
     res.json({
       totalJobs: jobs.length,
-      totalApplications: counts.applied + counts.shortlisted + counts.hired,
+      totalApplications:
+        counts.applied + counts.shortlisted + counts.rejected + counts.hired,
       hiredCount: counts.hired,
       counts,
-      trends,
+      trends: trendsAgg,
     });
   } catch (err) {
-    console.error("Error fetching recruiter analytics:", err);
+    console.error("Error fetching analytics:", err);
     res.status(500).json({ message: "Error fetching analytics" });
   }
 });
 
+/* =====================================================
+   📊 Overview Dashboard (GET /rpanel/overview)
+===================================================== */
 router.get("/rpanel/overview", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const jobs = await Job.find({ postedBy: req.user._id }).sort({ createdAt: -1 }).limit(5);
-    const jobCount = await Job.countDocuments({ postedBy: req.user._id });
-    const appCount = await Application.countDocuments({
-      job: { $in: jobs.map(j => j._id) },
+    const recentJobs = await Job.find({ postedBy: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    const totalJobs = await Job.countDocuments({ postedBy: req.user._id });
+
+    const totalApps = await Application.countDocuments({
+      job: { $in: recentJobs.map((j) => j._id) },
     });
+
     const hired = await Application.countDocuments({
-      job: { $in: jobs.map(j => j._id) },
+      job: { $in: recentJobs.map((j) => j._id) },
       status: "hired",
     });
 
     res.json({
-      totalJobs: jobCount,
-      totalApplications: appCount,
+      totalJobs,
+      totalApplications: totalApps,
       hiredCount: hired,
-      recentJobs: jobs,
+      recentJobs,
     });
   } catch (err) {
-    console.error("Error fetching recruiter overview:", err);
+    console.error("Error fetching overview:", err);
     res.status(500).json({ message: "Error fetching overview" });
   }
 });
 
 /* =====================================================
-   📦 Recruiter — All Applications (Fallback)
-   GET /api/recruiter/applications
-   Returns all applications across all jobs posted by the recruiter
+   📦 All Applications (GET /api/recruiter/applications)
 ===================================================== */
 router.get("/applications", protect, authorize(["recruiter"]), async (req, res) => {
   try {
-    const myJobs = await Job.find({ postedBy: req.user._id }).select("_id title");
-    const jobIds = myJobs.map((j) => j._id);
+    const jobs = await Job.find({ postedBy: req.user._id }).select("_id");
+    const jobIds = jobs.map((j) => j._id);
 
-    if (jobIds.length === 0) {
-      return res.json({ applications: [] });
-    }
-
-    const applications = await Application.find({ job: { $in: jobIds } })
-      .populate("job", "title")
-      .populate("candidate", "name email")
-      .sort({ createdAt: -1 });
+    const applications =
+      jobIds.length === 0
+        ? []
+        : await Application.find({ job: { $in: jobIds } })
+            .populate("job", "title")
+            .populate("candidate", "name email")
+            .sort({ createdAt: -1 });
 
     res.json({ applications });
   } catch (err) {
-    console.error("Error fetching all recruiter applications:", err);
+    console.error("Error fetching recruiter applications:", err);
     res.status(500).json({ message: "Error fetching recruiter applications" });
+  }
+});
+
+/* =====================================================
+   🤖 Recruiter — Analyze Resume (AI Scan)
+===================================================== */
+router.post("/applications/:id/analyze", protect, authorize(["recruiter"]), async (req, res) => {
+  try {
+    const application = await Application.findById(req.params.id).populate("job");
+    if (!application) return res.status(404).json({ message: "Application not found" });
+
+    // Verify ownership
+    if (String(application.job.postedBy) !== String(req.user._id))
+      return res.status(403).json({ message: "Not authorized" });
+
+    if (!application.resumeUrl)
+      return res.status(400).json({ message: "No resume URL found for this application." });
+
+    // 1. Fetch PDF from Cloudinary
+    const response = await axios.get(application.resumeUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+
+    // 2. Parse PDF
+    const data = await pdf(buffer);
+    const text = data.text;
+
+    // 3. Analyze
+    const result = performAnalysis(text);
+
+    // 4. Update Application
+    application.atsScore = result.score;
+    application.atsVerdict = result.verdict;
+    await application.save();
+
+    res.json({ 
+      message: "Resume analyzed successfully", 
+      result 
+    });
+
+  } catch (err) {
+    console.error("Error analyzing application resume:", err);
+    res.status(500).json({ message: "Error analyzing resume" });
   }
 });
 

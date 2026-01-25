@@ -6,6 +6,11 @@ const resourceSchema = new mongoose.Schema(
     description: { type: String },
     type: { type: String, enum: ["note", "tutorial", "link"], default: "note" },
     url: { type: String },
+    status: { 
+      type: String, 
+      enum: ["pending", "approved", "rejected"], 
+      default: "pending" 
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
   },
   { timestamps: true }

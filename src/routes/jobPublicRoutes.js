@@ -4,6 +4,7 @@ import Job from "../models/Job.js";
 import User from "../models/User.js";
 import { protect } from "../middleware/auth.js";
 import AuditLog from "../models/AuditLog.js";
+import Application from "../models/Application.js";
 import { notifyUser } from "../utils/notifyUser.js";
 
 const router = express.Router();
@@ -14,8 +15,8 @@ const router = express.Router();
 router.get(
   "/",
   asyncHandler(async (_req, res) => {
-    const jobs = await Job.find({ status: "open" })
-      .populate("recruiter", "name email orgName")
+    const jobs = await Job.find({ status: { $in: ["approved", "active", "open"] } })
+      .populate("postedBy", "name email orgName")
       .sort({ createdAt: -1 });
 
     res.json(jobs);
@@ -28,7 +29,7 @@ router.get(
 router.get(
   "/:id",
   asyncHandler(async (req, res) => {
-    const job = await Job.findById(req.params.id).populate("recruiter", "name email orgName");
+    const job = await Job.findById(req.params.id).populate("postedBy", "name email orgName");
     if (!job) return res.status(404).json({ message: "Job not found" });
     res.json(job);
   })
@@ -45,23 +46,39 @@ router.post(
       return res.status(403).json({ message: "Only candidates can apply for jobs." });
     }
 
-    const job = await Job.findById(req.params.id).populate("recruiter", "name email");
+    const job = await Job.findById(req.params.id).populate("postedBy", "name email");
     if (!job) return res.status(404).json({ message: "Job not found" });
-    if (job.status !== "open") return res.status(400).json({ message: "Job is closed." });
+    
+    // Allow applying if status is active, approved, or open
+    const allowedStatuses = ["active", "approved", "open"];
+    if (!allowedStatuses.includes(job.status)) {
+      return res.status(400).json({ message: "Job is closed." });
+    }
 
-    // 🧩 Check if already applied
-    const alreadyApplied = job.applicants.some(
-      (a) => a.user.toString() === req.user._id.toString()
-    );
-    if (alreadyApplied) {
+    // 🧩 Check if already applied (Single Source of Truth)
+    const existingApplication = await Application.findOne({ 
+      job: req.params.id, 
+      candidate: req.user._id 
+    });
+
+    if (existingApplication) {
       return res.status(400).json({ message: "You have already applied for this job." });
     }
 
-    // ✅ Add candidate to job applicants
-    job.applicants.push({ user: req.user._id, status: "applied" });
+    // ✅ Create new Application document
+    const application = await Application.create({
+      job: job._id,
+      candidate: req.user._id,
+      status: "applied",
+      resumeUrl: req.user.resumeUrl || "", // Assuming user has resumeUrl, else empty
+      coverLetter: req.body.coverLetter || ""
+    });
+
+    // ✅ Add application reference to job applicants (Array of ObjectIds)
+    job.applicants.push(application._id);
     await job.save();
 
-    // ✅ Add job to user's application list
+    // ✅ Add application reference to user's application list (Subdocuments)
     const me = await User.findById(req.user._id);
     me.applications.push({ job: job._id, status: "applied" });
     await me.save();
@@ -90,10 +107,10 @@ router.post(
     });
 
     // 🔔 Notify Recruiter
-    if (job.recruiter) {
+    if (job.postedBy) {
       await notifyUser({
-        userId: job.recruiter._id,
-        email: job.recruiter.email,
+        userId: job.postedBy._id,
+        email: job.postedBy.email,
         title: "New Application Received 👤",
         message: `${req.user.name} applied for your job "${job.title}".`,
         link: `/recruiter/jobs/${job._id}/applications`,
