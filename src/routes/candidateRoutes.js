@@ -11,7 +11,7 @@ import { notify } from "../utils/notify.js";
 const router = express.Router();
 
 /* =========================
-   GET PROFILE
+   GET PROFILE (Enhanced)
 ========================= */
 router.get(
   "/profile",
@@ -22,10 +22,46 @@ router.get(
 
     const user = await User.findById(req.user._id)
       .select("-password")
-      .populate("savedJobs", "title location status");
+      .populate("savedJobs", "title location status")
+      .lean();
 
-    res.json(user);
+    // Attach recent applications
+    const applications = await Application.find({ candidate: req.user._id })
+      .populate("job", "title") // Mini populate
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    res.json({ ...user, applications });
   })
+);
+
+/* =========================
+   UPDATE COVER LETTER
+========================= */
+router.put(
+  "/cover-letter",
+  protect,
+  asyncHandler(async (req, res) => {
+     const { coverLetter } = req.body;
+     const user = await User.findById(req.user._id);
+     user.coverLetter = coverLetter;
+     await user.save();
+     res.json({ message: "Cover letter saved ✅", coverLetter });
+  })
+);
+
+/* =========================
+   REMOVE SAVED JOB
+========================= */
+router.delete(
+   "/save/:id",
+   protect,
+   asyncHandler(async (req, res) => {
+      const user = await User.findById(req.user._id);
+      user.savedJobs = user.savedJobs.filter(id => id.toString() !== req.params.id);
+      await user.save();
+      res.json({ message: "Job removed from saved list" });
+   })
 );
 
 /* =========================

@@ -69,13 +69,26 @@ app.set("trust proxy", 1);
    🛡️ CORS CONFIG
 ===================================================== */
 
-const allowedOrigins = ["http://localhost:5173"];
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://onestopfrontend.vercel.app",
+  "https://onestop-server.vercel.app",
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) callback(null, true);
-      else callback(new Error(`Not allowed by CORS: ${origin}`));
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        console.log("🚫 Blocked by CORS:", origin); // Log blocked origin
+        return callback(new Error(`Not allowed by CORS: ${origin}`));
+      }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true,
@@ -173,6 +186,10 @@ app.use("/api/feed", feedRoutes);
 // 🚀 Project Showcase
 import projectRoutes from "./routes/projectRoutes.js";
 app.use("/api/projects", projectRoutes);
+
+// 📝 Assessment/Quiz Platform
+import assessmentRoutes from "./routes/assessmentRoutes.js";
+app.use("/api/assessments", assessmentRoutes);
 
 /* =====================================================
    🧭 HEALTH CHECK

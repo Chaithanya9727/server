@@ -13,6 +13,28 @@ const userSchema = new mongoose.Schema(
     /* 🏢 Company Info (Recruiter Extended Fields) */
     companyWebsite: { type: String, default: "" },
     companyDescription: { type: String, default: "" },
+    designation: { type: String, default: "" }, // ✨ New: HR Manager, Talent Acquisition, etc.
+    socialLinks: { 
+       linkedin: { type: String, default: "" },
+       twitter: { type: String, default: "" }
+    },
+
+    /* 🆔 Identity Verification (Recruiter KYC) */
+    aadhaarVerification: {
+      maskedNumber: { type: String, default: "" }, // XXXX-XXXX-1234 (last 4 digits only)
+      documentUrl: { type: String, default: "" }, // Temporary Cloudinary URL
+      verified: { type: Boolean, default: false },
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Admin who verified
+      verifiedAt: Date,
+      rejectionReason: { type: String, default: "" }
+    },
+    
+    upiVerification: {
+      upiId: { type: String, default: "" }, // name@paytm
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      transactionId: { type: String, default: "" }
+    },
 
     /* 🛠 Skills (for Auto-Matching) */
     skills: [{ type: String, trim: true }],
@@ -61,21 +83,63 @@ const userSchema = new mongoose.Schema(
       experience: { type: Number, default: 0 },
       bio: { type: String, default: "" },
       company: { type: String, default: "" },
+      
+      // Extended Profile
+      profilePhoto: { type: String, default: "" },
+      videoIntro: { type: String, default: "" }, // YouTube/Loom URL
+      languages: [{ type: String }], // ["English", "Hindi", "Spanish"]
+      timezone: { type: String, default: "Asia/Kolkata" },
+      hourlyRate: { type: Number, default: 0 }, // Base rate
+      
+      // Achievements & Credentials
+      achievements: [{ type: String }],
+      certifications: [{
+        name: String,
+        issuer: String,
+        year: Number,
+        url: String
+      }],
+      
+      // Services offered
       services: [
         {
           title: { type: String, required: true },
-          type: { type: String, enum: ["1:1 Call", "Resume Review", "Mock Interview", "Text Query"], required: true },
+          type: { 
+            type: String, 
+            enum: ["1:1 Call", "Resume Review", "Mock Interview", "Text Query", "Career Guidance"], 
+            required: true 
+          },
           price: { type: Number, default: 0 },
           duration: { type: Number, default: 30 }, // in minutes
           description: { type: String, default: "" },
+          isActive: { type: Boolean, default: true }
         }
       ],
+      
+      // Availability schedule
       availability: [
         {
-          day: { type: String, required: true }, // e.g., "Monday"
-          slots: [{ type: String }] // e.g., ["10:00 AM", "11:00 AM"]
+          day: { 
+            type: String, 
+            enum: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+            required: true 
+          },
+          slots: [{
+            startTime: { type: String, required: true }, // "09:00"
+            endTime: { type: String, required: true },   // "10:00"
+            isBooked: { type: Boolean, default: false }
+          }]
         }
-      ]
+      ],
+      
+      // Settings
+      bufferTime: { type: Number, default: 15 }, // minutes between sessions
+      maxSessionsPerDay: { type: Number, default: 5 },
+      isAvailable: { type: Boolean, default: true }, // vacation mode toggle
+      
+      // Stats (calculated)
+      totalSessions: { type: Number, default: 0 },
+      totalEarnings: { type: Number, default: 0 }
     },
     mentorRequested: { type: Boolean, default: false },
     mentorApproved: { type: Boolean, default: false },
@@ -86,6 +150,47 @@ const userSchema = new mongoose.Schema(
     resumeUrl: { type: String, default: "" },
     resumePublicId: { type: String, default: "" }, // for Cloudinary deletes/updates
     coverLetter: { type: String, default: "" },
+
+    /* 🎓 Rich Profile Fields (Unstop Style) */
+    education: [
+      {
+        school: { type: String, required: true },
+        degree: { type: String, required: true },
+        fieldOfStudy: { type: String, default: "" },
+        startDate: { type: Date },
+        endDate: { type: Date },
+        grade: { type: String, default: "" },
+        description: { type: String, default: "" },
+      }
+    ],
+    workExperience: [
+      {
+        company: { type: String, required: true },
+        title: { type: String, required: true },
+        location: { type: String, default: "" },
+        startDate: { type: Date },
+        endDate: { type: Date },
+        current: { type: Boolean, default: false },
+        description: { type: String, default: "" },
+      }
+    ],
+    projects: [
+      {
+        title: { type: String, required: true },
+        link: { type: String, default: "" },
+        startDate: { type: Date },
+        endDate: { type: Date },
+        description: { type: String, default: "" },
+      }
+    ],
+    certifications: [
+      {
+        name: { type: String, required: true },
+        organization: { type: String, default: "" },
+        issueDate: { type: Date },
+        link: { type: String, default: "" },
+      }
+    ],
 
     savedJobs: [{ type: mongoose.Schema.Types.ObjectId, ref: "Job" }],
 

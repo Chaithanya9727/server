@@ -75,7 +75,12 @@ router.post("/register-candidate", async (req, res) => {
 ===================================================== */
 const registerRecruiterHandler = async (req, res) => {
   try {
-    const { name, orgName, email, password, mobile } = req.body;
+    const { 
+       name, orgName, email, password, mobile,
+       companyWebsite, designation, linkedinProfile,
+       aadhaarDocumentUrl, aadhaarLast4  // ⭐ NEW: Aadhaar verification
+    } = req.body;
+    
     const normalizedEmail = (email || "").toLowerCase();
 
     if (!name || !orgName || !normalizedEmail || !password || !mobile) {
@@ -103,6 +108,20 @@ const registerRecruiterHandler = async (req, res) => {
       role: "recruiter",
       status: "pending",
       allowedRoles: ["recruiter"],
+      
+      // Extended Info
+      companyWebsite: companyWebsite || "",
+      designation: designation || "Recruiter",
+      socialLinks: {
+          linkedin: linkedinProfile || ""
+      },
+      
+      // ⭐ NEW: Aadhaar Verification
+      aadhaarVerification: {
+        maskedNumber: aadhaarLast4 ? `XXXX-XXXX-${aadhaarLast4}` : "",
+        documentUrl: aadhaarDocumentUrl || "",
+        verified: false
+      }
     });
 
     await OTP.deleteMany({ email: normalizedEmail, purpose: "email-verification" });

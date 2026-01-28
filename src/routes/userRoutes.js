@@ -54,6 +54,12 @@ router.put("/me", protect, async (req, res) => {
     if (req.body.skills) user.skills = req.body.skills;
     if (req.body.openToTeaming !== undefined) user.openToTeaming = req.body.openToTeaming;
 
+    // Unstop Profile Fields
+    if (req.body.education) user.education = req.body.education;
+    if (req.body.workExperience) user.workExperience = req.body.workExperience;
+    if (req.body.projects) user.projects = req.body.projects;
+    if (req.body.certifications) user.certifications = req.body.certifications;
+
     const updated = await user.save();
     res.json(updated);
   } catch (err) {
