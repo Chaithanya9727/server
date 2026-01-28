@@ -230,16 +230,28 @@ app.use((err, _req, res, _next) => {
   });
 });
 
+// 🏥 Health Check (To verify deployment)
+app.get("/", (req, res) => {
+  res.send("✅ OneStop Hub Backend is Running! (Vercel Mode)");
+});
+
 /* =====================================================
    ⚡ SERVER + SOCKET
 ===================================================== */
 
 const server = http.createServer(app);
+// initSocket(server); // ⚠️ Disable Socket on Vercel to prevent issues? 
+// Actually, keeping it is fine, it just won't work.
 initSocket(server);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`✅ OneStop Hub Server running on port ${PORT}`);
-});
+
+// 🛑 ONLY LISTEN IF NOT ON VERCEL
+// Vercel manages the connection itself via the exported app
+if (process.env.VERCEL !== "1") {
+  server.listen(PORT, () => {
+    console.log(`✅ OneStop Hub Server running on port ${PORT}`);
+  });
+}
 
 export default app;
