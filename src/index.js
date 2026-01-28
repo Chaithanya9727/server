@@ -73,8 +73,8 @@ try {
 const app = express();
 app.set("trust proxy", 1);
 
-// ⚡ Explicit Preflight Handling for Vercel
-app.options("*", cors());
+// ⚡ Explicit Preflight Handling (Handled by global cors middleware)
+// app.options("*", cors()); ❌ causing Express 5 crash
 
 /* =====================================================
    🛡️ CORS CONFIG
