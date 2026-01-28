@@ -60,10 +60,21 @@ import auditRoutes from "./routes/auditRoutes.js";
 ===================================================== */
 
 dotenv.config();
-await connectDB();
+
+// 🛡️ Fail-safe DB Connection
+try {
+  await connectDB();
+  console.log("✅ MongoDB Connected");
+} catch (error) {
+  console.error("❌ MongoDB Connection Failed:", error);
+  // Continue anyway so Vercel doesn't crash completely (allows debugging)
+}
 
 const app = express();
 app.set("trust proxy", 1);
+
+// ⚡ Explicit Preflight Handling for Vercel
+app.options("*", cors());
 
 /* =====================================================
    🛡️ CORS CONFIG
