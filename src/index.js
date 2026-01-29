@@ -62,6 +62,14 @@ import auditRoutes from "./routes/auditRoutes.js";
 dotenv.config();
 await connectDB();
 
+import { CLIENT_URL, SERVER_URL, isProduction } from "./config/env.js";
+console.log("🚀 Server Starting...");
+console.log("---------------------------------");
+console.log(`🌍 Environment: ${isProduction ? "PRODUCTION" : "DEVELOPMENT"}`);
+console.log(`🔗 CLIENT_URL: ${CLIENT_URL}`);
+console.log(`🔗 SERVER_URL: ${SERVER_URL}`);
+console.log("---------------------------------");
+
 const app = express();
 app.set("trust proxy", 1);
 

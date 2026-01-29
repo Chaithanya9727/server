@@ -16,6 +16,8 @@ export const sendEmail = async (to, subject, text = "", html = "") => {
         user: process.env.EMAIL_USER, // your verified Gmail
         pass: process.env.EMAIL_PASS, // Gmail App Password
       },
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000, // 10 seconds
     });
 
     // ✅ Default HTML Template if none provided
