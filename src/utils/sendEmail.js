@@ -3,23 +3,22 @@ import nodemailer from "nodemailer";
 
 /* =====================================================
    ✉️ Universal Email Utility - OneStop Hub
-   Supports text and HTML emails via any SMTP provider
-   (Gmail, Brevo, Mailersend, etc.)
+   Supports text and HTML emails (Gmail App Password)
 ===================================================== */
 export const sendEmail = async (to, subject, text = "", html = "") => {
   try {
-    // ✅ Configure SMTP Transporter (supports Gmail, Brevo, Mailersend, etc.)
+    // ✅ Configure Gmail SMTP Transporter
     const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || "smtp.gmail.com",
-      port: parseInt(process.env.EMAIL_PORT) || 587,
-      secure: process.env.EMAIL_PORT === "465", // Use SSL for port 465, TLS for 587
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true, // Use SSL
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+        user: process.env.EMAIL_USER, // your verified Gmail
+        pass: process.env.EMAIL_PASS, // Gmail App Password
       },
-      connectionTimeout: 30000, // 30 seconds
-      greetingTimeout: 30000, 
-      socketTimeout: 30000,
+      connectionTimeout: 20000, // 20 seconds
+      greetingTimeout: 20000, 
+      socketTimeout: 20000,
     });
 
     // ✅ Default HTML Template if none provided
@@ -35,7 +34,7 @@ export const sendEmail = async (to, subject, text = "", html = "") => {
     `;
 
     const mailOptions = {
-      from: `"OneStop Hub" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+      from: `"OneStop Hub" <${process.env.EMAIL_USER}>`,
       to,
       subject,
       text: text || "No text content provided.",
