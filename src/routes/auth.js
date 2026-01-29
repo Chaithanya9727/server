@@ -9,6 +9,7 @@ import AuditLog from "../models/AuditLog.js";
 import { protect } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import { CLIENT_URL } from "../config/env.js";
 
 const router = express.Router();
 
@@ -409,7 +410,7 @@ router.post("/verify-verification-otp", async (req, res) => {
 ===================================================== */
 function redirectWithToken(res, user) {
   const token = generateToken(user._id, user.role);
-  const redirectUrl = `${process.env.CLIENT_URL}/oauth-success?token=${token}`;
+  const redirectUrl = `${CLIENT_URL}/oauth-success?token=${token}`;
   return res.redirect(redirectUrl);
 }
 
@@ -419,7 +420,7 @@ router.get(
   "/google/callback",
   passport.authenticate("google", {
     session: false,
-    failureRedirect: `${process.env.CLIENT_URL}/login?error=google_oauth_failed`,
+    failureRedirect: `${CLIENT_URL}/login?error=google_oauth_failed`,
   }),
   async (req, res) => {
     await AuditLog.create({
@@ -438,7 +439,7 @@ router.get(
   "/github/callback",
   passport.authenticate("github", {
     session: false,
-    failureRedirect: `${process.env.CLIENT_URL}/login?error=github_oauth_failed`,
+    failureRedirect: `${CLIENT_URL}/login?error=github_oauth_failed`,
   }),
   async (req, res) => {
     await AuditLog.create({

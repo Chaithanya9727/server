@@ -10,15 +10,7 @@ dotenv.config();
 /* ============================================================
    🌐 ENVIRONMENT SWITCH
    ============================================================ */
-const isProduction = process.env.NODE_ENV === "production";
-
-const CLIENT_URL = isProduction
-  ? "https://onestopfrontend.vercel.app"
-  : "http://localhost:5173";
-
-const SERVER_URL = isProduction
-  ? "https://server-qm14.onrender.com"
-  : "http://localhost:5000";
+import { CLIENT_URL, SERVER_URL } from "./env.js";
 
 /* ============================================================
    🚀 GOOGLE STRATEGY (Conditional)
