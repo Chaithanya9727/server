@@ -60,37 +60,24 @@ import auditRoutes from "./routes/auditRoutes.js";
 ===================================================== */
 
 dotenv.config();
-
-// 🛡️ Fail-safe DB Connection
-// 🛡️ Fail-safe DB Connection (Non-blocking for Vercel)
-connectDB().then(() => {
-  console.log("✅ MongoDB Connected");
-}).catch((error) => {
-  console.error("❌ MongoDB Connection Failed:", error);
-});
+await connectDB();
 
 const app = express();
 app.set("trust proxy", 1);
-
-// ⚡ Explicit Preflight Handling (Handled by global cors middleware)
-// app.options("*", cors()); ❌ causing Express 5 crash
 
 /* =====================================================
    🛡️ CORS CONFIG
 ===================================================== */
 
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://onestopfrontend.vercel.app",
-  "https://onestop-server.vercel.app",
-  process.env.CLIENT_URL,
-  process.env.FRONTEND_URL
-].filter(Boolean);
+const allowedOrigins = ["http://localhost:5173"];
 
 app.use(
   cors({
-    origin: true, // 🟢 ALLOW ALL ORIGINS (Reflects Request Origin) - Fixes Vercel Issues
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) callback(null, true);
+      else callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true,
   })
 );
@@ -121,15 +108,6 @@ app.use(passport.session());
 /* =====================================================
    🚀 ROUTE MOUNTING (CLEANED, NO DUPLICATES)
 ===================================================== */
-
-// 🏥 Deployment Health Check (No DB dependency)
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
-    vercel: process.env.VERCEL, 
-    dbState: mongoose.connection.readyState 
-  });
-});
 
 // 🔐 Auth & Users
 app.use("/api/auth", authRoutes);
@@ -238,27 +216,16 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-
-
 /* =====================================================
    ⚡ SERVER + SOCKET
 ===================================================== */
 
 const server = http.createServer(app);
-
-// 🛑 Only initialize Socket.io when NOT on Vercel (Vercel doesn't support WebSockets)
-if (process.env.VERCEL !== "1") {
-  initSocket(server);
-}
+initSocket(server);
 
 const PORT = process.env.PORT || 5000;
-
-// 🛑 ONLY LISTEN IF NOT ON VERCEL
-// Vercel manages the connection itself via the exported app
-if (process.env.VERCEL !== "1") {
-  server.listen(PORT, () => {
-    console.log(`✅ OneStop Hub Server running on port ${PORT}`);
-  });
-}
+server.listen(PORT, () => {
+  console.log(`✅ OneStop Hub Server running on port ${PORT}`);
+});
 
 export default app;

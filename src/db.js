@@ -9,8 +9,7 @@ const connectDB = async () => {
     console.log("✅ MongoDB connected...");
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err.message);
-    // process.exit(1); // ⚠️ Do NOT kill process on Vercel
-    throw err; // Let caller handle it
+    process.exit(1);
   }
 };
 

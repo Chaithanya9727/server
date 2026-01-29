@@ -60,7 +60,7 @@ export const notifyUser = async ({
           <p style="font-size:1rem;color:#333;">${message}</p>
           ${
             link
-              ? `<p><a href="${process.env.CLIENT_URL || process.env.FRONTEND_URL || 'https://onestopfrontend.vercel.app'}${link}" 
+              ? `<p><a href="${process.env.FRONTEND_URL}${link}" 
                   style="color:#6c63ff;text-decoration:none;">View on OneStop Hub →</a></p>`
               : ""
           }

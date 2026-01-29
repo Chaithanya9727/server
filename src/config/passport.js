@@ -12,13 +12,13 @@ dotenv.config();
    ============================================================ */
 const isProduction = process.env.NODE_ENV === "production";
 
-const CLIENT_URL = process.env.CLIENT_URL || (isProduction
-  ? "https://onestopfrontend.vercel.app"
-  : "http://localhost:5173");
+const CLIENT_URL = isProduction
+  ? "https://onestop-frontend.netlify.app"
+  : "http://localhost:5173";
 
-const SERVER_URL = process.env.BACKEND_URL || (isProduction
-  ? "https://onestop-server.vercel.app"
-  : "http://localhost:5000");
+const SERVER_URL = isProduction
+  ? "https://server-hv9f.onrender.com"
+  : "http://localhost:5000";
 
 /* ============================================================
    🚀 GOOGLE STRATEGY (Conditional)
