@@ -240,9 +240,11 @@ app.get("/", (req, res) => {
 ===================================================== */
 
 const server = http.createServer(app);
-// initSocket(server); // ⚠️ Disable Socket on Vercel to prevent issues? 
-// Actually, keeping it is fine, it just won't work.
-initSocket(server);
+
+// 🛑 Only initialize Socket.io when NOT on Vercel (Vercel doesn't support WebSockets)
+if (process.env.VERCEL !== "1") {
+  initSocket(server);
+}
 
 const PORT = process.env.PORT || 5000;
 
