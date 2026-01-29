@@ -52,7 +52,7 @@ export const recruiterApprovedTemplate = (name, orgName) => `
     <h1>🎉 Congratulations ${name}!</h1>
     <p>Your recruiter account for <strong>${orgName}</strong> has been <b>approved</b>.</p>
     <p>You can now access the OneStop Hub Recruiter Dashboard to post opportunities, manage candidates, and collaborate with institutions.</p>
-    <a href="${process.env.CLIENT_URL}/login" class="button">Access Recruiter Dashboard</a>
+    <a href="${process.env.CLIENT_URL || 'https://onestopfrontend.vercel.app'}/login" class="button">Access Recruiter Dashboard</a>
     <footer>
       <p>— The OneStop Hub Admin Team</p>
     </footer>
@@ -178,7 +178,7 @@ export const candidateHiredTemplate = (candidateName, jobTitle, companyName) => 
     
     <p>Your skills and experience impressed our team, and we are excited to have you join us. The HR team will reach out to you shortly with the formal offer letter and next steps.</p>
     
-    <a href="${process.env.CLIENT_URL || '#'}" class="button">View Application Status</a>
+    <a href="${process.env.CLIENT_URL || 'https://onestopfrontend.vercel.app'}" class="button">View Application Status</a>
     
     <p>Welcome to the team!</p>
 

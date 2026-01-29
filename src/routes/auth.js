@@ -409,7 +409,8 @@ router.post("/verify-verification-otp", async (req, res) => {
 ===================================================== */
 function redirectWithToken(res, user) {
   const token = generateToken(user._id, user.role);
-  const redirectUrl = `${process.env.CLIENT_URL}/oauth-success?token=${token}`;
+    const CLIENT_URL = process.env.CLIENT_URL || "https://onestopfrontend.vercel.app";
+  const redirectUrl = `${CLIENT_URL}/oauth-success?token=${token}`;
   return res.redirect(redirectUrl);
 }
 
