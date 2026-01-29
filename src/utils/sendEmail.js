@@ -10,14 +10,15 @@ export const sendEmail = async (to, subject, text = "", html = "") => {
     // ✅ Configure Gmail SMTP Transporter
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
-      port: 587,
-      secure: false, // use TLS (STARTTLS)
+      port: 465,
+      secure: true, // Use SSL
       auth: {
         user: process.env.EMAIL_USER, // your verified Gmail
         pass: process.env.EMAIL_PASS, // Gmail App Password
       },
-      connectionTimeout: 10000, // 10 seconds
-      greetingTimeout: 10000, // 10 seconds
+      connectionTimeout: 20000, // 20 seconds
+      greetingTimeout: 20000, 
+      socketTimeout: 20000,
     });
 
     // ✅ Default HTML Template if none provided
