@@ -122,6 +122,15 @@ app.use(passport.session());
    🚀 ROUTE MOUNTING (CLEANED, NO DUPLICATES)
 ===================================================== */
 
+// 🏥 Deployment Health Check (No DB dependency)
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    vercel: process.env.VERCEL, 
+    dbState: mongoose.connection.readyState 
+  });
+});
+
 // 🔐 Auth & Users
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -229,10 +238,7 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-// 🏥 Health Check (To verify deployment)
-app.get("/", (req, res) => {
-  res.send("✅ OneStop Hub Backend is Running! (Vercel Mode)");
-});
+
 
 /* =====================================================
    ⚡ SERVER + SOCKET
