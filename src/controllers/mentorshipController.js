@@ -150,7 +150,7 @@ export const bookSession = async (req, res) => {
               <p><strong>Note:</strong> ${notes || "N/A"}</p>
             </div>
             <p>Please log in to your dashboard to Accept or Decline this request.</p>
-            <a href="http://localhost:5173/dashboard" style="display: inline-block; padding: 10px 20px; background: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Go to Dashboard</a>
+            <a href="${process.env.CLIENT_URL || 'https://onestopfrontend.vercel.app'}/dashboard" style="display: inline-block; padding: 10px 20px; background: #2563EB; color: white; text-decoration: none; border-radius: 5px;">Go to Dashboard</a>
           </div>
        `
     });
