@@ -13,7 +13,7 @@ dotenv.config();
 const isProduction = process.env.NODE_ENV === "production";
 
 const CLIENT_URL = isProduction
-  ? "https://onestop-frontend.netlify.app"
+  ? "https://onestopfrontend.vercel.app"
   : "http://localhost:5173";
 
 const SERVER_URL = isProduction
