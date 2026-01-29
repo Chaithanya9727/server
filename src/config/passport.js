@@ -17,7 +17,7 @@ const CLIENT_URL = isProduction
   : "http://localhost:5173";
 
 const SERVER_URL = isProduction
-  ? "https://server-hv9f.onrender.com"
+  ? "https://server-qm14.onrender.com"
   : "http://localhost:5000";
 
 /* ============================================================
