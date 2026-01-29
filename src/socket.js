@@ -10,7 +10,11 @@ import { setSocketInstance } from "./utils/notifyUser.js";
 const activeUsers = new Map(); // userId -> socketId
 
 export default function socketServer(httpServer) {
-  const allowedOrigins = ["http://localhost:5173"];
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "https://onestopfrontend.vercel.app",
+    process.env.CLIENT_URL
+  ].filter(Boolean);
 
   const io = new Server(httpServer, {
     cors: {

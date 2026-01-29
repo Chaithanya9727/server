@@ -2,7 +2,7 @@
   "name": "onestop-backend",
   "version": "2.0.0",
   "description": "🚀 OneStop Hub Backend API — Enterprise-grade platform for recruitment, mentorship, and campus management.",
-  "main": "src/server.js",
+  "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",

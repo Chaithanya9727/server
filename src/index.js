@@ -69,7 +69,12 @@ app.set("trust proxy", 1);
    🛡️ CORS CONFIG
 ===================================================== */
 
-const allowedOrigins = ["http://localhost:5173"];
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://onestopfrontend.vercel.app",
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(
   cors({
