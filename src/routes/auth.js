@@ -134,7 +134,7 @@ const registerRecruiterHandler = async (req, res) => {
       details: `Recruiter signup submitted for approval (${recruiter.email})`,
     });
 
-    await sendEmail(
+    const emailSent = await sendEmail(
       recruiter.email,
       "Recruiter Registration Received — OneStop Hub",
       `Hello ${recruiter.name},
@@ -146,6 +146,11 @@ You'll be notified once an admin approves your access.
 
 — OneStop Hub Team`
     );
+
+    if (!emailSent) {
+      console.warn("⚠️ Recruiter registration email failed to send.");
+      // We still return success because the user is created
+    }
 
     res.status(201).json({
       message: "Recruiter registered successfully. Await admin approval ✅",
@@ -187,7 +192,7 @@ router.post("/create-admin", protect, authorize(["superadmin"]), async (req, res
       details: `SuperAdmin created Admin (${admin.email})`,
     });
 
-    await sendEmail(
+    const emailSent = await sendEmail(
       admin.email,
       "Admin Account Created - OneStop Hub",
       `Hello ${admin.name},
@@ -197,6 +202,10 @@ Password: ${password}
 
 — OneStop Hub Team`
     );
+
+    if (!emailSent) {
+      return res.status(500).json({ message: "Admin created, but email failed to send." });
+    }
 
     res.status(201).json({ message: "Admin created successfully ✅" });
   } catch (err) {
@@ -296,11 +305,15 @@ router.post("/send-otp", otpLimiter, async (req, res) => {
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    await sendEmail(
+    const emailSent = await sendEmail(
       user.email,
       "OneStop Password Reset",
       `Your password reset OTP is ${otp}\nValid for 5 minutes.`
     );
+
+    if (!emailSent) {
+      return res.status(500).json({ message: "Failed to send OTP email. Try again later." });
+    }
 
     res.json({ message: "OTP sent to your email ✅" });
   } catch (err) {
@@ -370,11 +383,16 @@ router.post("/send-verification-otp", otpLimiter, async (req, res) => {
       verified: false,
     });
 
-    await sendEmail(
+    const emailSent = await sendEmail(
       normalizedEmail,
       "Verify Your Email - OneStop Hub",
       `Your verification code is: ${otp}\nValid for 5 minutes.`
     );
+
+    if (!emailSent) {
+      await OTP.deleteOne({ _id: (await OTP.findOne({ email: normalizedEmail, otp }))._id }); // Clean up if failed
+      return res.status(500).json({ message: "Failed to send Verification email. Try again later." });
+    }
 
     res.json({ message: "Verification OTP sent ✅" });
   } catch {
