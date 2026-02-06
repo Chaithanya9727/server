@@ -1,24 +1,19 @@
-import https from "https";
+import axios from "axios";
 
 export const fetchRemotiveJobs = async () => {
     // Remotive Public API
     const url = "https://remotive.com/api/remote-jobs?limit=20";
 
     try {
-        const data = await new Promise((resolve, reject) => {
-            https.get(url, (res) => {
-                if (res.statusCode !== 200) {
-                    reject(new Error(`Remotive API Error: ${res.statusCode}`));
-                    return;
-                }
-                let d = "";
-                res.on('data', c => d += c);
-                res.on('end', () => resolve(d));
-            }).on('error', reject);
+        const response = await axios.get(url, {
+            timeout: 10000,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
         });
 
-        const json = JSON.parse(data);
-        const jobs = json.jobs || [];
+        const jobs = response.data.jobs || [];
 
         return jobs.map(job => ({
             title: job.title,
@@ -36,7 +31,11 @@ export const fetchRemotiveJobs = async () => {
         }));
 
     } catch (error) {
-        console.error("Failed to fetch Remotive jobs:", error.message);
+        if (error.response) {
+            console.error(`Failed to fetch Remotive jobs: Remotive API Error: ${error.response.status}`);
+        } else {
+            console.error("Failed to fetch Remotive jobs:", error.message);
+        }
         return [];
     }
 };

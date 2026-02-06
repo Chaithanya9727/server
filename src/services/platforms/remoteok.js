@@ -1,20 +1,21 @@
-import https from "https";
+import axios from "axios";
 
 export const fetchRemoteOKJobs = async () => {
   // RemoteOK API
   const url = "https://remoteok.com/api";
 
   try {
-    const data = await new Promise((resolve, reject) => {
-        https.get(url, { headers: { 'User-Agent': 'OneStop-Agency/1.0' } }, (res) => {
-            if(res.statusCode !== 200) reject(new Error(`RemoteOK API Error: ${res.statusCode}`));
-            let d = "";
-            res.on('data', c => d+=c);
-            res.on('end', () => resolve(d));
-        }).on('error', reject);
+    const response = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'referer': 'https://remoteok.com/'
+      }
     });
 
-    const json = JSON.parse(data);
+    const json = response.data;
     // RemoteOK returns array, first element is legal disclaimer usually
     const jobs = Array.isArray(json) ? json.slice(1) : []; 
 
@@ -34,7 +35,11 @@ export const fetchRemoteOKJobs = async () => {
     }));
 
   } catch (error) {
-    console.error("Failed to fetch RemoteOK jobs:", error.message);
+    if (error.response) {
+      console.error(`Failed to fetch RemoteOK jobs: RemoteOK API Error: ${error.response.status}`);
+    } else {
+      console.error("Failed to fetch RemoteOK jobs:", error.message);
+    }
     return [];
   }
 };

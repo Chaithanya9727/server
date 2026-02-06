@@ -5,19 +5,32 @@ import {
   chatWithAI,
   generateJobDescription,
   generateCoverLetter,
-  checkJobEligibility
+  checkJobEligibility,
+  analyzeAadhaar,
+  enhanceCV,
+  generateQuiz,
+  analyzeAudioAnswer
 } from "../controllers/aiController.js";
 
 const router = express.Router();
 
 // Interview Routes
+// Interview Routes
 router.post("/interview/questions", generateQuestions);
 router.post("/interview/analyze", analyzeAnswer);
 router.post("/chat", chatWithAI);
+
+// Audio Analysis (Local Multer)
+import multer from "multer";
+const upload = multer({ dest: "uploads/" });
+router.post("/interview/analyze-audio", upload.single("audio"), analyzeAudioAnswer);
 
 // New AI Features
 router.post("/job-description", generateJobDescription);
 router.post("/cover-letter", generateCoverLetter);
 router.post("/job-eligibility", checkJobEligibility);
+router.post("/analyze-aadhaar", analyzeAadhaar);
+router.post("/enhance-cv", enhanceCV);
+router.post("/quiz/generate", generateQuiz);
 
 export default router;

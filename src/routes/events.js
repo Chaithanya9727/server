@@ -24,6 +24,8 @@ import { authorize } from "../middleware/authorize.js";
 import { getEventRegistrations } from "../controllers/registrationController.js";
 import AuditLog from "../models/AuditLog.js";
 import Event from "../models/Event.js";
+import Submission from "../models/Submission.js";
+import cloudinary from "../utils/cloudinary.js";
 
 const router = express.Router();
 
@@ -186,14 +188,32 @@ router.delete(
   authorize(["superadmin"]),
   async (req, res) => {
     try {
-      const count = await Event.countDocuments();
+      const events = await Event.find({});
+      const count = events.length;
+
+      for (const event of events) {
+         // Cleanup cover image
+         if (event.coverImage?.publicId) {
+            await cloudinary.uploader.destroy(event.coverImage.publicId).catch(() => {});
+         }
+         // Cleanup all submissions for this event
+         const subs = await Submission.find({ event: event._id });
+         for (const s of subs) {
+            if (s.filePublicId) {
+               await cloudinary.uploader.destroy(s.filePublicId).catch(() => {});
+            }
+         }
+         await Submission.deleteMany({ event: event._id });
+      }
+
       await Event.deleteMany({});
+      
       await AuditLog.create({
         action: "DELETE_ALL_EVENTS",
         performedBy: req.user._id,
-        details: `SuperAdmin deleted all ${count} events`,
+        details: `SuperAdmin deleted all ${count} events and associated files`,
       });
-      res.json({ message: `Deleted all ${count} events ✅` });
+      res.json({ message: `Deleted all ${count} events & cleaned storage ✅` });
     } catch (err) {
       console.error("Bulk delete events error:", err);
       res.status(500).json({ message: "Error bulk deleting events" });

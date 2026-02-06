@@ -59,6 +59,16 @@ export const createEvent = async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
+    const eventStart = new Date(body.startDate);
+    const minStartDate = new Date();
+    minStartDate.setDate(minStartDate.getDate() + 7);
+
+    if (eventStart < minStartDate) {
+      return res.status(400).json({ 
+        message: "Event cannot be scheduled so soon. Please select a start date at least 7 days from today to ensure proper planning and audience reach." 
+      });
+    }
+
     let coverImage;
     if (req.file) {
       const uploaded = await uploadBufferToCloudinary(
@@ -104,21 +114,32 @@ export const createEvent = async (req, res) => {
 };
 
 // 🌍 Get Events (Public)
+// 🌍 Get Events (Public)
 export const getEvents = async (req, res) => {
   try {
     const { search = "", status = "", category = "", page = 1, limit = 9 } = req.query;
     const query = {};
+    const now = new Date();
+
     if (search) query.$text = { $search: search };
-    if (category) query.category = category;
+    if (category && category !== "all") query.category = category;
+
+    // 🗓️ Date-based Status Filtering
+    if (status === "live") {
+      query.startDate = { $lte: now };
+      query.endDate = { $gte: now };
+    } else if (status === "upcoming") {
+      query.startDate = { $gt: now };
+    } else if (status === "past") {
+      query.endDate = { $lt: now };
+    }
 
     const total = await Event.countDocuments(query);
-    let events = await Event.find(query)
-      .sort({ startDate: 1 })
+    const events = await Event.find(query)
+      .sort({ startDate: status === "past" ? -1 : 1 }) // Show newest past events first, else closest upcoming
       .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit))
       .lean({ virtuals: true });
-
-    if (status) events = events.filter((e) => e.status === status);
 
     res.json({
       events,
@@ -131,6 +152,7 @@ export const getEvents = async (req, res) => {
     res.status(500).json({ message: "Error fetching events" });
   }
 };
+
 
 // 🔍 Get Event by ID
 export const getEventById = async (req, res) => {
@@ -229,7 +251,22 @@ export const deleteEvent = async (req, res) => {
       }
     }
 
+    // 1. Delete Submission Files from Cloudinary
+    const submissions = await Submission.find({ event: event._id });
+    for (const sub of submissions) {
+      if (sub.filePublicId) {
+        try {
+          await cloudinary.uploader.destroy(sub.filePublicId);
+        } catch (e) {
+          console.warn(`Failed to delete submission file ${sub.filePublicId}:`, e.message);
+        }
+      }
+    }
+
+    // 2. Delete all submission records
     await Submission.deleteMany({ event: event._id });
+
+    // 3. Delete the event itself
     await event.deleteOne();
 
     await AuditLog.create({
@@ -252,7 +289,7 @@ export const deleteEvent = async (req, res) => {
 export const registerForEvent = async (req, res) => {
   try {
     const { id: eventId } = req.params;
-    const { teamName = "" } = req.body;
+    const { teamName = "", customResponses = [] } = req.body;
 
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: "Event not found" });
@@ -268,11 +305,23 @@ export const registerForEvent = async (req, res) => {
       return res.status(400).json({ message: "You are already registered for this event" });
     }
 
+    // Initialize round status for all defined rounds
+    const roundStatus = (event.rounds || []).map(r => ({
+      roundId: r.roundNumber,
+      status: "pending",
+      score: null,
+      feedback: ""
+    }));
+
     event.participants.push({
       userId: req.user._id,
       name: req.user.name,
       email: req.user.email,
       teamName,
+      customResponses,
+      registrationStatus: "registered",
+      currentRound: 1,
+      roundStatus,
       registeredAt: new Date(),
       submissionStatus: "not_submitted",
     });
@@ -302,7 +351,7 @@ export const registerForEvent = async (req, res) => {
       if (job) {
          const existingApp = await Application.findOne({ job: job._id, candidate: req.user._id });
          if (!existingApp) {
-             // Calculate ATS Score
+             // Calculate ATS Score ...
              const userSkills = req.user.skills || [];
              const jobSkills = job.skills || [];
              let score = 50; 
@@ -321,13 +370,12 @@ export const registerForEvent = async (req, res) => {
              await Application.create({
                  job: job._id,
                  candidate: req.user._id,
-                 resumeUrl: req.user.resume, // Use profile resume
+                 resumeUrl: req.user.resume,
                  status: "applied",
                  atsScore: score,
                  atsVerdict: verdict
              });
 
-             // Notify User about Auto-Application
              await notifyUser({
                 userId: req.user._id,
                 email: req.user.email,
@@ -380,6 +428,7 @@ export const uploadSubmission = async (req, res) => {
         teamName: participant.teamName,
         submissionLink,
         fileUrl: fileResult?.secure_url || "",
+        filePublicId: fileResult?.public_id || "",
         status: "submitted",
       },
       { new: true, upsert: true }
@@ -420,7 +469,7 @@ export const uploadSubmission = async (req, res) => {
 export const evaluateSubmission = async (req, res) => {
   try {
     const { id: eventId } = req.params;
-    const { userId, score, feedback = "", round = 1 } = req.body;
+    const { userId, score, feedback = "", roundId = 1, status = "qualified" } = req.body;
 
     if (!eventId || !userId)
       return res.status(400).json({ message: "Missing eventId or userId" });
@@ -434,21 +483,49 @@ export const evaluateSubmission = async (req, res) => {
     if (!participant)
       return res.status(404).json({ message: "Participant not found for this event" });
 
-    participant.score = typeof score === "number" ? score : null;
-    participant.feedback = feedback;
-    participant.submissionStatus = "reviewed";
-    participant.round = round;
+    // 🏆 Multi-Round Evaluation Logic
+    if (!participant.roundStatus) participant.roundStatus = [];
+    
+    let rStatus = participant.roundStatus.find(rs => rs.roundId === Number(roundId));
+    if (!rStatus) {
+       rStatus = { roundId: Number(roundId), status, score, feedback, evaluatedAt: new Date() };
+       participant.roundStatus.push(rStatus);
+    } else {
+       rStatus.status = status;
+       rStatus.score = score;
+       rStatus.feedback = feedback;
+       rStatus.evaluatedAt = new Date();
+    }
+
+    // Move to next round if qualified
+    if (status === "qualified") {
+       const nextRound = event.rounds.find(r => r.roundNumber === Number(roundId) + 1);
+       if (nextRound) {
+          participant.currentRound = nextRound.roundNumber;
+          participant.submissionStatus = "not_submitted"; // Reset for next round
+       } else {
+          // Final round completed
+          participant.submissionStatus = "reviewed";
+       }
+    } else if (status === "disqualified") {
+       participant.submissionStatus = "rejected";
+    }
+
+    // Update Overall Stats
+    participant.score = typeof score === "number" ? score : participant.score;
+    participant.feedback = feedback || participant.feedback;
     participant.lastUpdated = new Date();
 
     await event.save();
 
+    // Sync with Submission Model
     await Submission.findOneAndUpdate(
       { event: eventId, user: userId },
       {
         $set: {
           finalScore: participant.score,
           feedback: participant.feedback,
-          status: "reviewed",
+          status: status === "qualified" ? "reviewed" : "rejected",
           updatedAt: new Date(),
         },
       },
@@ -457,19 +534,21 @@ export const evaluateSubmission = async (req, res) => {
 
     await notifyUser({
       userId: userId,
-      email: participant.email, // Ensure participant object has email or fetch user
-      title: "Event Result Published",
-      message: `You scored ${participant.score} in "${event.title}". Feedback: ${feedback || 'None'}`,
-      link: `/leaderboard`, 
+      email: participant.email,
+      title: status === "qualified" ? "Qualified for Next Round!" : "Event Result Published",
+      message: status === "qualified" 
+        ? `Congratulations! You have qualified for the next round of "${event.title}".`
+        : `Management has reviewed your submission for "${event.title}". Result: ${status}. Score: ${score}`,
+      link: `/events/${event._id}`, 
       type: "result",
       emailEnabled: true,
-      emailSubject: `Result: ${event.title}`
+      emailSubject: `Update: ${event.title}`
     });
 
     await AuditLog.create({
       action: "EVALUATE_SUBMISSION",
       performedBy: req.user._id,
-      details: `Evaluated participant ${userId} in event ${eventId}`,
+      details: `Evaluated participant ${userId} in event ${eventId} (Round ${roundId}: ${status})`,
     });
 
     res.json({ message: "Evaluation saved", participant });

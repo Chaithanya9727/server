@@ -22,7 +22,7 @@ router.get(
         role: "recruiter",
         status: "pending", // only show applications that need action
       })
-        .select("name email mobile orgName status createdAt")
+        .select("name email mobile orgName status createdAt companyWebsite designation socialLinks aadhaarVerification")
         .sort({ createdAt: -1 });
 
       res.json(recruiters);
@@ -130,6 +130,51 @@ For more details, contact support.
     } catch (err) {
       console.error("Reject recruiter error:", err);
       res.status(500).json({ message: "Error rejecting recruiter" });
+    }
+  }
+);
+
+/* =====================================================
+   🆔 Verify Aadhaar Document
+===================================================== */
+router.patch(
+  "/recruiters/:id/verify-aadhaar",
+  protect,
+  authorize(["admin", "superadmin"]),
+  async (req, res) => {
+    try {
+      const recruiter = await User.findById(req.params.id);
+      if (!recruiter) return res.status(404).json({ message: "Recruiter not found" });
+
+      if (!recruiter.aadhaarVerification?.documentUrl) {
+          return res.status(400).json({ message: "No Aadhaar document to verify" });
+      }
+
+      recruiter.aadhaarVerification.verified = true;
+      recruiter.aadhaarVerification.verifiedAt = new Date();
+      recruiter.aadhaarVerification.verifiedBy = req.user._id;
+      
+      await recruiter.save();
+
+      await AuditLog.create({
+        action: "VERIFY_RECRUITER_AADHAAR",
+        performedBy: req.user._id,
+        targetUser: recruiter._id,
+        details: `Recruiter (${recruiter.email}) Aadhaar document verified by admin`,
+      });
+
+      // 🔔 In-app notification
+      await notifyUser({
+        userId: recruiter._id,
+        title: "Aadhaar Verified ✓",
+        message: "Your identity document has been verified by the admin team.",
+        type: "system",
+      });
+
+      res.json({ message: "Aadhaar verified successfully ✓", verified: true });
+    } catch (err) {
+      console.error("Verify Aadhaar error:", err);
+      res.status(500).json({ message: "Error verifying Aadhaar" });
     }
   }
 );

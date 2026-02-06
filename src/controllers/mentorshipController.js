@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import Session from "../models/Session.js";
 import AuditLog from "../models/AuditLog.js";
+import Conversation from "../models/Conversation.js";
+import Message from "../models/Message.js";
 import { notifyUser } from "../utils/notifyUser.js";
 
 // 📌 Get All Approved Mentors
@@ -64,11 +66,25 @@ export const getMentorById = async (req, res) => {
         { $group: { _id: "$mentor", avgRating: { $avg: "$rating" }, totalReviews: { $sum: 1 } } }
     ]);
 
+    // Fetch upcoming booked slots (pending or confirmed)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); 
+
+    const bookedSessions = await Session.find({
+       mentor: mentor._id,
+       status: { $in: ["pending", "confirmed"] },
+       scheduledDate: { $gte: today }
+    })
+    .select("scheduledDate scheduledTime duration")
+    .lean();
+
+
     res.json({ 
        ...mentor, 
        averageRating: stats[0]?.avgRating?.toFixed(1) || "New",
        totalReviews: stats[0]?.totalReviews || 0,
-       reviews 
+       reviews,
+       bookedSessions
     });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
@@ -80,6 +96,11 @@ export const updateMentorSettings = async (req, res) => {
   try {
     const { services, availability, bio, experience, expertise, company } = req.body;
     const user = await User.findById(req.user._id);
+
+    // Ensure mentorProfile exists
+    if (!user.mentorProfile) {
+      user.mentorProfile = {};
+    }
 
     // Patch mentor profile
     if (services) user.mentorProfile.services = services;
@@ -105,6 +126,31 @@ export const bookSession = async (req, res) => {
     const mentor = await User.findById(mentorId);
     if (!mentor || mentor.role !== "mentor") return res.status(404).json({ message: "Mentor not found" });
 
+    // 🛡️ Prevent Double Booking (Same Candidate, Same Slot)
+    const existingMyRequest = await Session.findOne({
+      mentor: mentorId,
+      mentee: req.user._id,
+      scheduledDate,
+      scheduledTime,
+      status: { $in: ["pending", "confirmed"] }
+    });
+    
+    if (existingMyRequest) {
+      return res.status(400).json({ message: "You have already requested this slot. Please wait for approval." });
+    }
+
+    // 🛡️ Prevent Slot Collision (Slot already Confirmed for ANYONE)
+    const slotTaken = await Session.findOne({
+      mentor: mentorId,
+      scheduledDate,
+      scheduledTime,
+      status: "confirmed"
+    });
+
+    if (slotTaken) {
+      return res.status(400).json({ message: "This slot has just been booked by another candidate. Please choose another." });
+    }
+
     // Create Booking
     const session = await Session.create({
       mentor: mentorId,
@@ -126,6 +172,31 @@ export const bookSession = async (req, res) => {
       targetUser: mentorId,
       details: `Booked session: ${serviceTitle} on ${scheduledDate} @ ${scheduledTime}`,
     });
+
+    // 💬 Auto-start Conversation & Send Greeting
+    try {
+      const pair = [req.user._id.toString(), mentorId.toString()].sort();
+      let conv = await Conversation.findOne({ participants: { $all: pair, $size: 2 } });
+      
+      if (!conv) {
+         conv = await Conversation.create({ participants: pair });
+      }
+
+      await Message.create({
+         conversation: conv._id,
+         from: req.user._id,
+         to: mentorId,
+         body: `👋 Hi, I just requested a *${serviceTitle}* session for ${new Date(scheduledDate).toLocaleDateString()} at ${scheduledTime}. Looking forward to connecting!`,
+         status: 'delivered'
+      });
+
+      // Update conversation timestamp
+      conv.lastMessageAt = new Date();
+      await conv.save();
+
+    } catch (chatError) {
+      console.error("Auto-chat init failed (non-fatal):", chatError);
+    }
 
     // Notify Mentor (DB + Socket + Email)
     await notifyUser({
@@ -202,8 +273,8 @@ export const getMySessions = async (req, res) => {
     const query = isMentor ? { mentor: req.user._id } : { mentee: req.user._id };
     
     const sessions = await Session.find(query)
-      .populate("mentee", "name avatar email")
-      .populate("mentor", "name avatar email mentorProfile")
+      .populate("mentee", "name avatar email role mobile")
+      .populate("mentor", "name avatar email role mobile mentorProfile")
       .sort({ createdAt: -1 });
 
     res.json(sessions);
@@ -222,8 +293,17 @@ export const updateSessionStatus = async (req, res) => {
     if (!session) return res.status(404).json({ message: "Session not found" });
     
     // Authorization Check
-    if (req.user.role !== "superadmin" && session.mentor._id.toString() !== req.user._id.toString()) {
+    const isMentor = session.mentor._id.toString() === req.user._id.toString();
+    const isMentee = session.mentee._id.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === "superadmin";
+
+    if (!isMentor && !isAdmin && !isMentee) {
       return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // Specific Rule: Mentees can ONLY cancel
+    if (isMentee && status !== "cancelled") {
+       return res.status(403).json({ message: "Candidates can only cancel sessions." });
     }
 
     session.status = status;
@@ -231,7 +311,11 @@ export const updateSessionStatus = async (req, res) => {
     
     await session.save();
 
-    // Notify Mentee (DB + Socket + Email)
+    // Notify Counterpart (DB + Socket + Email)
+    // If Mentor updated -> Notify Mentee
+    // If Mentee updated -> Notify Mentor
+    const targetUser = isMentor ? session.mentee : session.mentor;
+    
     let emailSubject = `Session Update: ${status.toUpperCase()}`;
     let emailHtml = "";
     
@@ -248,9 +332,9 @@ export const updateSessionStatus = async (req, res) => {
     } else if (status === "cancelled") {
        emailSubject = "❌ Session Cancelled";
        emailHtml = `
-         <h2>Your session was cancelled.</h2>
-         <p>The mentor <strong>${session.mentor.name}</strong> was unable to accept your request at this time.</p>
-         <p>Please try booking another slot.</p>
+         <h2>Session Cancelled</h2>
+         <p>The session for <strong>${session.serviceTitle}</strong> on ${new Date(session.scheduledDate).toDateString()} has been cancelled by ${req.user.name}.</p>
+         <p>Reason/Change of plans.</p>
        `;
     } else if (status === "completed") {
        emailSubject = "🎉 Session Completed";
@@ -262,10 +346,10 @@ export const updateSessionStatus = async (req, res) => {
     }
 
     await notifyUser({
-       userId: session.mentee._id,
-       email: session.mentee.email,
+       userId: targetUser._id,
+       email: targetUser.email,
        title: `Session ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-       message: `Your session with ${session.mentor.name} is now ${status}.`,
+       message: `Session for ${session.serviceTitle} was ${status} by ${req.user.name}.`,
        link: `/mentorship/my-sessions`,
        type: "mentorship",
        emailEnabled: true,
@@ -278,4 +362,38 @@ export const updateSessionStatus = async (req, res) => {
     console.error("Update session error:", err);
     res.status(500).json({ message: "Error updating session" });
   }
+};
+
+// 📌 Get Mentor Stats (Earnings, Hours, etc.)
+export const getMentorStats = async (req, res) => {
+   try {
+      const mentorId = req.user._id;
+
+      const stats = await Session.aggregate([
+         { $match: { mentor: mentorId, status: "completed" } },
+         { 
+            $group: { 
+               _id: null, 
+               totalEarnings: { $sum: "$price" },
+               totalMinutes: { $sum: "$duration" },
+               completedSessions: { $sum: 1 }
+            } 
+         }
+      ]);
+
+      const pendingRequests = await Session.countDocuments({ mentor: mentorId, status: "pending" });
+
+      const data = stats[0] || { totalEarnings: 0, totalMinutes: 0, completedSessions: 0 };
+
+      res.json({
+         earnings: data.totalEarnings,
+         hours: (data.totalMinutes / 60).toFixed(1),
+         sessions: data.completedSessions,
+         pending: pendingRequests
+      });
+
+   } catch (err) {
+      console.error("Mentor stats error:", err);
+      res.status(500).json({ message: "Failed to fetch stats" });
+   }
 };

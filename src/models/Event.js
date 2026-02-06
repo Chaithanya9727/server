@@ -40,16 +40,42 @@ const participantSchema = new mongoose.Schema(
     email: { type: String, trim: true, lowercase: true },
     teamName: { type: String, trim: true },
 
+    // Custom Form Responses
+    customResponses: [
+      {
+        fieldId: String,
+        label: String,
+        value: mongoose.Schema.Types.Mixed
+      }
+    ],
+
     submissionStatus: {
       type: String,
-      enum: ["not_submitted", "submitted", "reviewed"],
+      enum: ["not_submitted", "submitted", "reviewed", "shortlisted", "rejected"],
       default: "not_submitted",
     },
-    score: { type: Number, min: 0, default: null },
+    
+    // Multi-Round Progress
+    currentRound: { type: Number, default: 1 },
+    roundStatus: [
+      {
+        roundId: Number,
+        score: { type: Number, default: null },
+        feedback: { type: String, default: "" },
+        status: { type: String, enum: ["pending", "qualified", "disqualified"], default: "pending" },
+        evaluatedAt: Date
+      }
+    ],
+
+    score: { type: Number, min: 0, default: null }, // Final/Aggregate score
     feedback: { type: String, trim: true },
-    round: { type: Number, default: 1 },
     registeredAt: { type: Date, default: Date.now },
     lastUpdated: { type: Date },
+    
+    // Rewards
+    certificateUrl: { type: String, default: "" },
+    isWinner: { type: Boolean, default: false },
+    rank: { type: Number, default: null }
   },
   { _id: false }
 );
@@ -73,6 +99,7 @@ const eventSchema = new mongoose.Schema(
     },
     tags: [{ type: String, trim: true }],
     location: { type: String, default: "Online" },
+    venue: { type: String, default: "" }, // ✨ New: Physical venue if any
     coverImage: imageSchema,
 
     // 🔗 Linked Hiring Opportunity (Hybrid Event)
@@ -83,13 +110,50 @@ const eventSchema = new mongoose.Schema(
     endDate: { type: Date, required: true },
     registrationDeadline: { type: Date, required: true },
 
-    // Event Structure
+    // 🏆 Multi-Round Pipeline
+    rounds: [
+      {
+         roundNumber: { type: Number, required: true },
+         title: { type: String, required: true },
+         type: { type: String, enum: ["quiz", "submission", "interview", "other"], default: "submission" },
+         description: { type: String, default: "" },
+         startDate: Date,
+         endDate: Date,
+         isElimination: { type: Boolean, default: true }
+      }
+    ],
+
+    // 📝 Custom Registration Form Builder
+    customFields: [
+      {
+         id: { type: String, required: true },
+         label: { type: String, required: true },
+         type: { type: String, enum: ["text", "number", "dropdown", "file", "url"], default: "text" },
+         options: [{ type: String }], // for dropdown
+         required: { type: Boolean, default: false },
+         placeholder: String
+      }
+    ],
+
+    // 📜 Certificate Configuration
+    certificateConfig: {
+       enabled: { type: Boolean, default: false },
+       templateUrl: String,
+       signatureUrl: String,
+       issuingAuthority: String,
+       issuerDesignation: String
+    },
+
+    // 🤝 Team Finder
     maxTeamSize: { type: Number, default: 1, min: 1 },
+    teamFinderEnabled: { type: Boolean, default: true },
+
+    // Rewards & Rules
     prizes: [{ type: String }],
     rules: [{ type: String }],
     faqs: [faqSchema],
     
-    // Quiz Config
+    // Quiz Config (Round 1 fallback or standalone)
     quiz: {
       questions: [quizQuestionSchema],
       duration: { type: Number, default: 15 } // minutes

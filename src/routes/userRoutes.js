@@ -10,7 +10,11 @@ import multer from "multer";
 import cloudinary from "../utils/cloudinary.js";
 import fs from "fs";
 
+import uploadCloud from "../middleware/upload.js";
+
 const router = express.Router();
+const uploadLocal = multer({ dest: "uploads/" }); // Renamed to avoid usage conflict if any, though existing avatar route uses 'upload' variable. I'll keep 'upload' as is or just rename for safety.
+// Keeping existing upload as 'upload' to not break existing code, but I'll add uploadCloud.
 const upload = multer({ dest: "uploads/" });
 
 /* =====================================================
@@ -119,9 +123,62 @@ router.put("/me/avatar", protect, upload.single("file"), async (req, res) => {
   }
 });
 
+// ✅ General Document Upload (Resume, Certificates)
+router.post("/upload-doc", protect, uploadCloud.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // Multer-storage-cloudinary already handled the upload
+    res.json({ 
+      message: "File uploaded successfully",
+      url: req.file.path || req.file.secure_url,
+      originalName: req.file.originalname
+    });
+  } catch (err) {
+    console.error("Document upload error:", err);
+    res.status(500).json({ message: "Error uploading document" });
+  }
+});
+
 /* =====================================================
    👑 USER MANAGEMENT (Admin + SuperAdmin)
 ===================================================== */
+
+// ✅ Get User Directory (For Chat/Search - Accessible to all Auth Users)
+router.get("/directory", protect, async (req, res) => {
+  try {
+    const { search = "" } = req.query;
+    const query = search
+      ? {
+          $or: [
+            { name: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+          ],
+        }
+      : {};
+    
+    // Return limited fields for security
+    const users = await User.find(query)
+      .select("name avatar role email")
+      .limit(50);
+      
+    res.json(users);
+  } catch (err) {
+    console.error("Fetch directory error:", err);
+    res.status(500).json({ message: "Error fetching user directory" });
+  }
+});
+
+// ✅ Get Specific Public User Details (For Chat Initialization)
+router.get("/public/:id", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("name avatar role mobile email");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching user details" });
+  }
+});
 
 // ✅ Get Global Leaderboard
 router.get("/leaderboard", protect, async (req, res) => {

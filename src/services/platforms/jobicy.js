@@ -1,22 +1,22 @@
-import https from "https";
+import axios from "axios";
 
 export const fetchJobicyJobs = async () => {
   // Jobicy Public Feed (Remote jobs mostly)
-  // https://jobicy.com/api/v2/remote-jobs
   const url = "https://jobicy.com/api/v2/remote-jobs?count=20";
 
   try {
-    const data = await new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            if(res.statusCode !== 200) reject(new Error(`Jobicy API Error: ${res.statusCode}`));
-            let d = "";
-            res.on('data', c => d+=c);
-            res.on('end', () => resolve(d));
-        }).on('error', reject);
+    const response = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+      }
     });
 
-    const json = JSON.parse(data);
-    const jobs = json.jobs || [];
+    const jobs = response.data.jobs || [];
 
     return jobs.map((job) => ({
         // Map to our Job Schema (virtual structure)
@@ -30,12 +30,16 @@ export const fetchJobicyJobs = async () => {
         url: job.url, // External Link
         source: "Jobicy",
         postedBy: null, // External
-        createdAt: new Date(job.pubDate).toISOString(),
+        createdAt: new Date(job.pubDate || new Date()).toISOString(),
         isExternal: true
     }));
 
   } catch (error) {
-    console.error("Failed to fetch Jobicy jobs:", error.message);
+    if (error.response) {
+      console.error(`Failed to fetch Jobicy jobs: Jobicy API Error: ${error.response.status}`);
+    } else {
+      console.error("Failed to fetch Jobicy jobs:", error.message);
+    }
     return [];
   }
 };

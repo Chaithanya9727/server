@@ -139,7 +139,22 @@ const userSchema = new mongoose.Schema(
       
       // Stats (calculated)
       totalSessions: { type: Number, default: 0 },
-      totalEarnings: { type: Number, default: 0 }
+      totalEarnings: { type: Number, default: 0 },
+
+      // 📄 Verification Documents
+      documents: {
+        resume: { type: String, default: "" }, 
+        experienceCert: { type: String, default: "" },
+        otherCert: { type: String, default: "" }
+      },
+      
+      // 🌐 Socials
+      socials: {
+        linkedin: { type: String, default: "" },
+        github: { type: String, default: "" },
+        portfolio: { type: String, default: "" },
+        twitter: { type: String, default: "" }
+      }
     },
     mentorRequested: { type: Boolean, default: false },
     mentorApproved: { type: Boolean, default: false },

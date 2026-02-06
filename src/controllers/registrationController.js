@@ -1,5 +1,6 @@
 // controllers/registrationController.js
 import Event from "../models/Event.js";
+import Submission from "../models/Submission.js";
 
 /**
  * @desc Get all registrations for a specific event (Unstop-style)
@@ -40,18 +41,26 @@ export const getEventRegistrations = async (req, res) => {
     const sliced = sorted.slice(skip, skip + limit);
 
     // Format data for frontend
-    const data = sliced.map((p) => ({
-      _id: p.userId || p._id,
-      userId: p.userId,
-      name: p.name || "—",
-      email: p.email || "—",
-      teamName: p.teamName || "—",
-      registeredAt: p.registeredAt,
-      submissionStatus: p.submissionStatus || "not_submitted",
-      score: typeof p.score === "number" ? p.score : null,
-      lastUpdated: p.lastUpdated || null,
-      feedback: p.feedback || "",
-    }));
+    const submissions = await Submission.find({ event: eventId }).lean();
+    
+    const data = sliced.map((p) => {
+      const sub = submissions.find(s => String(s.user) === String(p.userId));
+      return {
+        _id: p.userId || p._id,
+        userId: p.userId,
+        name: p.name || "—",
+        email: p.email || "—",
+        teamName: p.teamName || "—",
+        registeredAt: p.registeredAt,
+        submissionStatus: p.submissionStatus || "not_submitted",
+        score: typeof p.score === "number" ? p.score : null,
+        lastUpdated: p.lastUpdated || null,
+        feedback: p.feedback || "",
+        submissionLink: sub?.submissionLink || "",
+        fileUrl: sub?.fileUrl || "",
+        submissionDate: sub?.createdAt || null
+      };
+    });
 
     res.json({
       data,

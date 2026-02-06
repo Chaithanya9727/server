@@ -1,5 +1,6 @@
 import User from "../models/User.js";
 import AuditLog from "../models/AuditLog.js";
+import { notifyUser } from "../utils/notifyUser.js";
 
 /* =====================================================
    🧠 CANDIDATE → APPLY FOR MENTOR
@@ -16,12 +17,16 @@ export const applyForMentor = async (req, res) => {
     if (user.mentorRequested)
       return res.status(400).json({ message: "You have already applied" });
 
-    const { expertise, experience, bio } = req.body;
+    const { expertise, experience, bio, company, documents, socials } = req.body;
 
-    user.set({
-      mentorProfile: { expertise, experience, bio },
-      mentorRequested: true,
-    });
+    user.mentorProfile.expertise = expertise;
+    user.mentorProfile.experience = experience;
+    user.mentorProfile.bio = bio;
+    user.mentorProfile.company = company;
+    if (documents) user.mentorProfile.documents = documents;
+    if (socials) user.mentorProfile.socials = socials;
+    
+    user.mentorRequested = true;
 
     await user.save({ validateBeforeSave: true });
 
@@ -117,16 +122,29 @@ export const updateMentorProfile = async (req, res) => {
 
 /* =====================================================
    🎓 GET MENTEES ASSIGNED TO A MENTOR
+   Now dynamically fetches from Sessions instead of static User.mentees array
 ===================================================== */
 export const getMentees = async (req, res) => {
   try {
-    const mentor = await User.findById(req.user._id).populate(
-      "mentees",
-      "name email avatar"
-    );
-    if (!mentor) return res.status(404).json({ message: "Mentor not found" });
+    const Session = (await import("../models/Session.js")).default;
+    
+    // Find all sessions where this user is the mentor (confirmed or completed)
+    const sessions = await Session.find({
+      mentor: req.user._id,
+      status: { $in: ["confirmed", "completed", "pending"] }
+    }).populate("mentee", "name email avatar mobile role");
 
-    res.json({ mentees: mentor.mentees || [] });
+    // Extract unique mentees
+    const menteeMap = new Map();
+    sessions.forEach(session => {
+      if (session.mentee && !menteeMap.has(session.mentee._id.toString())) {
+        menteeMap.set(session.mentee._id.toString(), session.mentee);
+      }
+    });
+
+    const mentees = Array.from(menteeMap.values());
+
+    res.json({ mentees });
   } catch (err) {
     console.error("getMentees error:", err);
     res.status(500).json({ message: "Error fetching mentees" });
@@ -140,6 +158,7 @@ export const giveFeedback = async (req, res) => {
   try {
     const { feedback } = req.body;
     const { studentId } = req.params;
+    const Session = (await import("../models/Session.js")).default;
 
     const mentor = await User.findById(req.user._id);
     const mentee = await User.findById(studentId);
@@ -147,8 +166,15 @@ export const giveFeedback = async (req, res) => {
     if (!mentor || !mentee)
       return res.status(404).json({ message: "User not found" });
 
-    if (!mentor.mentees.includes(mentee._id)) {
-      return res.status(403).json({ message: "Not authorized for this student" });
+    // Verify relationship via sessions (Dynamic check)
+    const activeRelationship = await Session.findOne({
+      mentor: mentor._id,
+      mentee: mentee._id,
+      status: { $in: ["confirmed", "completed"] }
+    });
+
+    if (!activeRelationship) {
+      return res.status(403).json({ message: "Not authorized to give feedback to this student yet. Ensure a session is confirmed or completed." });
     }
 
     // 🧾 Log mentor feedback
@@ -162,6 +188,30 @@ export const giveFeedback = async (req, res) => {
         role: mentee.role,
       },
       details: `Mentor ${mentor.email} gave feedback to ${mentee.email}: "${feedback}"`,
+    });
+
+    // 📢 Notify Mentee
+    await notifyUser({
+      userId: mentee._id,
+      email: mentee.email,
+      title: "New Performance Review",
+      message: `Your mentor, ${mentor.name}, has shared a performance review with you.`,
+      link: "/profile", // Or a specific reviews page if available
+      type: "mentorship",
+      emailEnabled: true,
+      emailSubject: "New Feedback from your Mentor - OneStop",
+      emailHtml: `
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h2 style="color: #2563EB;">New Performance Review</h2>
+          <p>Hi ${mentee.name},</p>
+          <p>Your mentor <strong>${mentor.name}</strong> has just submitted a performance review for you.</p>
+          <div style="background: #f8fafc; padding: 20px; border-left: 4px solid #2563EB; margin: 20px 0; font-style: italic; color: #334155;">
+            "${feedback}"
+          </div>
+          <p>Keep up the great work!</p>
+          <a href="http://localhost:5173/profile" style="display: inline-block; padding: 12px 24px; background: #2563EB; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">View Profile</a>
+        </div>
+      `
     });
 
     res.json({ message: "Feedback recorded successfully ✅" });

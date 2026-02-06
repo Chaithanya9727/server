@@ -32,6 +32,10 @@ const submissionSchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
+    filePublicId: {
+      type: String,
+      default: "",
+    },
     notes: {
       type: String,
       default: "",

@@ -1,5 +1,7 @@
 import Groq from "groq-sdk";
 import asyncHandler from "express-async-handler";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import nodeFetch from "node-fetch";
 
 const getGroqClient = () => {
   if (!process.env.GROQ_API_KEY) {
@@ -8,21 +10,31 @@ const getGroqClient = () => {
   return new Groq({ apiKey: process.env.GROQ_API_KEY });
 };
 
+const getGeminiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not set.");
+  }
+  return new GoogleGenerativeAI(apiKey);
+};
+
 /**
  * @desc Generate interview questions based on role/topic
  * @route POST /api/ai/interview/questions
  * @access Public
  */
 export const generateQuestions = asyncHandler(async (req, res) => {
-  const { role = "Software Engineer", topic, difficulty = "Medium" } = req.body;
+  const { role = "Software Engineer", topic, difficulty = "Medium", company = "Tech Industry", experience = "Intermediate" } = req.body;
 
   if (!process.env.GROQ_API_KEY) {
     console.warn("⚠️ GROQ_API_KEY missing. Using fallback interview questions.");
     return res.json({ 
       questions: [
-        "Tell me about a challenging project you worked on.",
-        "What is your greatest strength as a developer?",
-        "How do you handle conflict in a team?"
+        { type: "text", question: "Tell me about a challenging project you worked on." },
+        { type: "mcq", question: "What is the time complexity of binary search?", options: ["O(n)", "O(log n)", "O(n^2)", "O(1)"], answer: "O(log n)" },
+        { type: "text", question: "What is your greatest strength as a developer?" },
+        { type: "mcq", question: "Which HTTP method is used to update a resource?", options: ["GET", "POST", "PUT", "DELETE"], answer: "PUT" },
+        { type: "mcq", question: "In React, what hook is used for side effects?", options: ["useState", "useEffect", "useMemo", "useCallback"], answer: "useEffect" }
       ],
       isFallback: true 
     });
@@ -31,13 +43,24 @@ export const generateQuestions = asyncHandler(async (req, res) => {
   try {
     const groq = getGroqClient();
     
+    // Updated prompt for company-specific interview
     const prompt = `
-      You are an expert technical interviewer. Generate 5 unique interview questions for a candidate applying for a "${role}" position.
-      ${topic ? `Focus specifically on the topic: "${topic}".` : ""}
-      Difficulty level: ${difficulty}.
+      Act as a Senior Technical Recruiter at ${company}. You are conducting a mock interview for a "${role}" position (Experience Level: ${experience}). 
       
-      Return ONLY a JSON array of strings. Do not include markdown formatting or explanation. 
-      Example: ["Question 1", "Question 2"]
+      Generate a realistic interview set of 8 questions that ${company} is likely to ask for this role.
+      Topic Focus: ${topic || "General"}
+      Difficulty: ${difficulty}
+      
+      Structure:
+      - 3 Deep Behavioral/Technical Questions (type: "text") tailored to ${company}'s culture (e.g., Leadership Principles for Amazon, Googliness for Google).
+      - 5 Multiple Choice Questions (type: "mcq") with 4 options and the correct answer, testing technical fundamentals.
+
+      Return ONLY a JSON array of objects. No markdown.
+      Format:
+      [
+        { "type": "text", "question": "..." },
+        { "type": "mcq", "question": "...", "options": ["Option A", "Option B", "Option C", "Option D"], "answer": "Exact text of correct option" }
+      ]
     `;
 
     const chatCompletion = await groq.chat.completions.create({
@@ -49,20 +72,102 @@ export const generateQuestions = asyncHandler(async (req, res) => {
     const text = chatCompletion.choices[0]?.message?.content || "";
     const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
     
-    const questions = JSON.parse(cleanText);
+    let questions;
+    try {
+        questions = JSON.parse(cleanText);
+    } catch (e) {
+        console.error("JSON Parse Error:", e);
+        // Fallback robust parsing if AI returns malformed JSON
+        questions = [
+            { type: "text", question: `Explain a complex technical challenge you solved as a ${role}.` }
+        ];
+    }
+    
     res.json({ questions });
 
   } catch (error) {
     console.error("AI Generation Error:", error.message);
     res.json({ 
       questions: [
-        `Tell me about a time you faced a challenge as a ${role}.`,
-        "What are your greatest strengths and weaknesses?",
-        "Describe a difficult bug you fixed recently.",
-        "How do you handle tight deadlines?",
-        "Where do you see yourself in 5 years?"
+        { type: "text", question: `Tell me about a time you faced a challenge as a ${role}.` },
+        { type: "mcq", question: "What does CSS stand for?", options: ["Cascading Style Sheets", "Creative Style System", "Computer Style Sheets", "Colorful Style Sheets"], answer: "Cascading Style Sheets" },
+        { type: "text", question: "Describe a difficult bug you fixed recently." }
       ],
       isFallback: true 
+    });
+  }
+});
+
+
+/**
+ * @desc Generate Topic-Specific Quiz (MCQs)
+ * @route POST /api/ai/quiz/generate
+ * @access Public
+ */
+export const generateQuiz = asyncHandler(async (req, res) => {
+  const { topic = "React", difficulty = "Intermediate", count = 10 } = req.body;
+
+  if (!process.env.GROQ_API_KEY) {
+     return res.json({
+        topic,
+        questions: Array.from({ length: count }).map((_, i) => ({
+           id: i,
+           question: `Sample Fallback Question ${i + 1} about ${topic}`,
+           options: ["Option A", "Option B", "Option C", "Option D"],
+           correctAnswer: "Option A",
+           explanation: "This is a fallback explanation because the AI service is unavailable."
+        })),
+        isFallback: true
+     });
+  }
+
+  try {
+    const groq = getGroqClient();
+    const prompt = `
+      Generate a technical quiz for the topic: "${topic}".
+      Difficulty: ${difficulty}
+      Number of Questions: ${count}
+      
+      Format: Return ONLY a JSON array of objects.
+      Structure:
+      [
+        {
+          "question": "Question text here?",
+          "options": ["A", "B", "C", "D"],
+          "correctAnswer": "Exact text of the correct option",
+          "explanation": "Brief explanation of why it is correct"
+        }
+      ]
+      
+      Ensure questions are code-focused where applicable (e.g., "What is the output of...").
+      No markdown, just raw JSON.
+    `;
+
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.5,
+    });
+
+    const text = chatCompletion.choices[0]?.message?.content || "";
+    const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const questions = JSON.parse(cleanText);
+
+    res.json({ topic, questions });
+
+  } catch (error) {
+    console.error("AI Quiz Gen Error:", error.message);
+    res.json({
+       topic,
+       questions: [
+          {
+             question: `What is the primary purpose of ${topic || "this technology"}?`,
+             options: ["To style web pages", "To build user interfaces", "To manage databases", "To handle HTTP requests"],
+             correctAnswer: "To build user interfaces",
+             explanation: "This is a default fallback question."
+          }
+       ],
+       isFallback: true
     });
   }
 });
@@ -73,7 +178,7 @@ export const generateQuestions = asyncHandler(async (req, res) => {
  * @access Public
  */
 export const analyzeAnswer = asyncHandler(async (req, res) => {
-  const { question, answer } = req.body;
+  const { question, answer, company = "General Tech", role = "Developer" } = req.body;
 
   if (!question || !answer) {
     res.status(400);
@@ -83,25 +188,34 @@ export const analyzeAnswer = asyncHandler(async (req, res) => {
   try {
     const groq = getGroqClient();
     
+    // Updated prompt for company-specific fit analysis
     const prompt = `
-      You are an expert hiring manager.
+      Act as a Hiring Manager at ${company}. Analyze the following candidate answer for a ${role} position.
+      
       Question: "${question}"
       Candidate's Answer: "${answer}"
       
-      Analyze the answer and provide feedback in valid JSON format with the following keys:
-      - score: number (0-100)
-      - sentiment: string (Positive, Neutral, Negative)
-      - feedback: string (2-3 sentences max)
-      - improvements: string (1 concise tip)
-      - keywords: array of strings (key concepts mentioned)
+      Provide a comprehensive evaluation in valid JSON format:
+      {
+        "score": number (0-100),
+        "sentiment": "Excellent" | "Good" | "Average" | "Needs Improvement",
+        "hiringDecision": "Strong Hire" | "Hire" | "Weak Hire" | "No Hire" (Based on ${company} standards),
+        "cultureFit": "High" | "Medium" | "Low" (Does this align with ${company}'s values?),
+        "feedback": "Professional feedback focusing on technical accuracy and ${company} culture fit.",
+        "strengths": ["list..."],
+        "weaknesses": ["list..."],
+        "improvements": "Actionable tips to improve.",
+        "sampleAnswer": "An ideal answer that would impress a ${company} recruiter."
+      }
       
-      Return ONLY the JSON. No wrapping (like \`\`\`json).
+      Be strictly professional and objective. Return ONLY JSON.
     `;
 
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.3-70b-versatile",
-      temperature: 0.5,
+      temperature: 0.6,
+      max_tokens: 1500
     });
 
     const text = chatCompletion.choices[0]?.message?.content || "";
@@ -115,11 +229,120 @@ export const analyzeAnswer = asyncHandler(async (req, res) => {
     const wordCount = answer.split(" ").length;
     res.json({
       score: Math.min(85, wordCount * 2),
-      sentiment: "Neutral",
-      feedback: "We are currently experiencing high traffic with our AI service. This is a simulated score.",
-      improvements: "Try to elaborate more on your experience.",
-      keywords: ["simulated", "analysis"],
+      sentiment: "Average",
+      feedback: "We are currently experiencing high traffic with our AI service. This is a simulated analysis based on answer length and structure.",
+      strengths: ["Attempted to answer the question", "Provided some relevant information"],
+      weaknesses: ["Could provide more specific examples", "Could elaborate further"],
+      improvements: "Try to use the STAR method (Situation, Task, Action, Result) to structure your answers with specific examples from your experience.",
+      sampleAnswer: "A strong answer would include specific examples, quantifiable results, and demonstrate clear problem-solving skills relevant to the question.",
+      corrections: "Unable to provide detailed corrections at this time. Please try again.",
+      keywords: ["communication", "experience", "skills"],
+      detailedAnalysis: {
+        clarity: 70,
+        relevance: 75,
+        depth: 65,
+        communication: 70
+      },
       isFallback: true
+    });
+  }
+});
+
+/**
+ * @desc Analyze Audio Answer (Transcribe -> Analyze)
+ * @route POST /api/ai/interview/analyze-audio
+ * @access Public
+ */
+import fs from "fs";
+
+export const analyzeAudioAnswer = asyncHandler(async (req, res) => {
+  const { question, company = "General Tech", role = "Developer" } = req.body;
+  const audioFile = req.file;
+
+  if (!audioFile) {
+     res.status(400); 
+     throw new Error("Audio file is required");
+  }
+
+  let transcript = "";
+  try {
+     const groq = getGroqClient();
+     
+     // 1. Transcribe
+     const translation = await groq.audio.transcriptions.create({
+       file: fs.createReadStream(audioFile.path),
+       model: "whisper-large-v3",
+       response_format: "json",
+       temperature: 0.0
+     });
+     
+     transcript = translation.text;
+     
+     // Cleanup temp file
+     fs.unlinkSync(audioFile.path);
+     
+  } catch (err) {
+     console.error("Transcription Error:", err);
+     // If transcription fails, we might still want to cleanup
+     if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
+     res.status(500);
+     throw new Error("Failed to transcribe audio: " + err.message);
+  }
+
+  // 2. Analyze (Re-using logic from analyzeAnswer but inline for now to avoid refactor complexity)
+  if (!transcript || transcript.trim().length < 5) {
+     return res.json({
+        score: 0,
+        sentiment: "Neutral",
+        feedback: "Could not hear any clear answer. Please try speaking closer to the microphone.",
+        transcription: transcript
+     });
+  }
+
+  try {
+    const groq = getGroqClient();
+    const prompt = `
+      Act as a Hiring Manager at ${company}. Analyze the following candidate spoken answer for a ${role} position.
+      
+      Question: "${question}"
+      Candidate's Spoken Answer (Transcribed): "${transcript}"
+      
+      Provide a comprehensive evaluation in valid JSON format:
+      {
+        "score": number (0-100),
+        "sentiment": "Excellent" | "Good" | "Average" | "Needs Improvement",
+        "hiringDecision": "Strong Hire" | "Hire" | "Weak Hire" | "No Hire" (Based on ${company} standards),
+        "cultureFit": "High" | "Medium" | "Low",
+        "feedback": "Professional feedback focusing on technical accuracy and communication clarity.",
+        "strengths": ["list..."],
+        "weaknesses": ["list..."],
+        "improvements": "Actionable tips.",
+        "sampleAnswer": "Ideal answer."
+      }
+      
+      Return ONLY JSON.
+    `;
+
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.6
+    });
+
+    const text = chatCompletion.choices[0]?.message?.content || "";
+    const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const analysis = JSON.parse(cleanText);
+    
+    // Append the transcription so UI can show what AI heard
+    res.json({ ...analysis, transcription: transcript });
+
+  } catch (err) {
+    console.error("Analysis Error:", err);
+    res.json({
+       score: 50,
+       feedback: "Error analyzing the transcribed text.",
+       transcription: transcript,
+       isFallback: true
     });
   }
 });
@@ -127,6 +350,7 @@ export const analyzeAnswer = asyncHandler(async (req, res) => {
 /**
  * @desc Auto-generate Job Description for Recruiters
  * @route POST /api/ai/job-description
+ * @access Public
  */
 export const generateJobDescription = asyncHandler(async (req, res) => {
   const { title, skills, location, type } = req.body;
@@ -173,6 +397,7 @@ export const generateJobDescription = asyncHandler(async (req, res) => {
 /**
  * @desc Generate Cover Letter for Candidates
  * @route POST /api/ai/cover-letter
+ * @access Public
  */
 export const generateCoverLetter = asyncHandler(async (req, res) => {
   const { jobTitle, company, userProfile } = req.body;
@@ -220,6 +445,7 @@ export const generateCoverLetter = asyncHandler(async (req, res) => {
 /**
  * @desc Check Job Eligibility / Match Score
  * @route POST /api/ai/job-eligibility
+ * @access Public
  */
 export const checkJobEligibility = asyncHandler(async (req, res) => {
   const { jobDescription, userSkills, userExperience } = req.body;
@@ -301,5 +527,198 @@ export const chatWithAI = asyncHandler(async (req, res) => {
     } else {
       res.json({ reply: "I'm having trouble thinking right now! 🤯 Please try again." });
     }
+  }
+});
+/**
+ * @desc Analyze Aadhaar Card using Gemini Vision
+ * @route POST /api/ai/analyze-aadhaar
+ * @access Public
+ */
+export const analyzeAadhaar = asyncHandler(async (req, res) => {
+  const { imageUrl, userName } = req.body;
+
+  if (!imageUrl) {
+    res.status(400);
+    throw new Error("Aadhaar image URL is required");
+  }
+
+  try {
+    const genAI = getGeminiClient();
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    // Fetch image as buffer
+    const response = await nodeFetch(imageUrl);
+    const buffer = await response.arrayBuffer();
+    const base64Image = Buffer.from(buffer).toString("base64");
+
+    const prompt = `
+      You are an expert Identity Audit AI. Analyze this Aadhaar card image.
+      Candidate Name in Profile: "${userName}"
+      
+      Task:
+      1. Extract the Full Name from the Aadhaar card.
+      2. Check if the Aadhaar Name matches the Candidate Name (Partial match is OK if middle names are missing).
+      3. Look for signs of digital tampering, photoshop, or fake templates (e.g., mismatched fonts, weird shadows, overlapping text).
+      4. Check if the card is a physical photo or a digital screenshot.
+      
+      Return ONLY valid JSON:
+      {
+        "extractedName": "string",
+        "isNameMatch": boolean,
+        "isOriginal": boolean,
+        "trustScore": number (0-100),
+        "auditReport": "1-2 sentence detailed observation",
+        "redFlags": ["flag 1", "flag 2"] (if any)
+      }
+    `;
+
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: "image/jpeg",
+        },
+      },
+    ]);
+
+    const text = result.response.text();
+    const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const audit = JSON.parse(cleanText);
+
+    res.json(audit);
+
+  } catch (error) {
+    console.error("Gemini Audit Error:", error);
+    res.status(500).json({
+      extractedName: "Unknown",
+      isNameMatch: false,
+      isOriginal: true,
+      trustScore: 50,
+      auditReport: "AI Vision Service is currently busy. Manual review recommended.",
+      redFlags: ["Cloud Audit Unavailable"]
+    });
+  }
+});
+
+/**
+ * @desc Enhance CV with AI suggestions
+ * @route POST /api/ai/enhance-cv
+ * @access Public
+ */
+export const enhanceCV = asyncHandler(async (req, res) => {
+  const { resumeText, targetRole, experience } = req.body;
+
+  if (!resumeText) {
+    res.status(400);
+    throw new Error("Resume text is required");
+  }
+
+  try {
+    const groq = getGroqClient();
+    const prompt = `
+      You are an expert Career Coach and Resume Writer with 15+ years of experience helping candidates land their dream jobs.
+      
+      Analyze this resume and provide comprehensive enhancement suggestions:
+      
+      TARGET ROLE: ${targetRole || "General"}
+      EXPERIENCE LEVEL: ${experience || "Mid-level"}
+      
+      RESUME CONTENT:
+      ${resumeText.substring(0, 3000)}
+      
+      Provide a detailed analysis in valid JSON format with these keys:
+      
+      {
+        "overallScore": number (0-100, current resume quality),
+        "enhancedSummary": "A rewritten, more impactful professional summary (2-3 sentences)",
+        "grammarIssues": [
+          {
+            "original": "exact text with issue",
+            "corrected": "corrected version",
+            "reason": "brief explanation"
+          }
+        ],
+        "contentImprovements": [
+          {
+            "section": "section name (e.g., Experience, Skills)",
+            "issue": "what's wrong",
+            "suggestion": "specific improvement",
+            "example": "rewritten example if applicable"
+          }
+        ],
+        "missingElements": [
+          "element 1 that should be added",
+          "element 2 that should be added"
+        ],
+        "keywordSuggestions": [
+          "keyword1",
+          "keyword2",
+          "keyword3"
+        ],
+        "formattingTips": [
+          "tip 1",
+          "tip 2"
+        ],
+        "impactMetrics": {
+          "beforeScore": number (0-100),
+          "afterScore": number (0-100, estimated after improvements),
+          "atsCompatibility": number (0-100),
+          "readability": number (0-100)
+        },
+        "actionableSteps": [
+          "Step 1: ...",
+          "Step 2: ...",
+          "Step 3: ..."
+        ]
+      }
+      
+      Be specific, actionable, and professional. Focus on ATS optimization, impact-driven language, and quantifiable achievements.
+      Return ONLY valid JSON, no markdown formatting.
+    `;
+
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.6,
+      max_tokens: 2500
+    });
+
+    const text = chatCompletion.choices[0]?.message?.content || "";
+    const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    const enhancement = JSON.parse(cleanText);
+    res.json(enhancement);
+
+  } catch (error) {
+    console.error("AI CV Enhancement Error:", error.message);
+    res.json({
+      overallScore: 70,
+      enhancedSummary: "Unable to generate enhanced summary at this time. Please try again.",
+      grammarIssues: [],
+      contentImprovements: [
+        {
+          section: "General",
+          issue: "AI service temporarily unavailable",
+          suggestion: "Use action verbs, quantify achievements, and tailor content to job description",
+          example: "Led team of 5 engineers to deliver project 2 weeks ahead of schedule, reducing costs by 15%"
+        }
+      ],
+      missingElements: ["Quantifiable achievements", "Action verbs", "Keywords from job description"],
+      keywordSuggestions: ["leadership", "collaboration", "problem-solving"],
+      formattingTips: ["Use bullet points", "Keep it concise", "Use consistent formatting"],
+      impactMetrics: {
+        beforeScore: 70,
+        afterScore: 85,
+        atsCompatibility: 75,
+        readability: 80
+      },
+      actionableSteps: [
+        "Step 1: Add quantifiable metrics to achievements",
+        "Step 2: Use strong action verbs",
+        "Step 3: Tailor resume to target role"
+      ],
+      isFallback: true
+    });
   }
 });

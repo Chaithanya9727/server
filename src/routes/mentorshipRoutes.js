@@ -8,13 +8,17 @@ import {
   bookSession,
   reviewSession,
   getMySessions,
-  updateSessionStatus
+  updateSessionStatus,
+  getMentorStats
 } from "../controllers/mentorshipController.js";
 
 const router = express.Router();
 
 // 📌 Get All Approved Mentors (Public/Protected)
 router.get("/list", protect, getMentors);
+
+// 📌 Get Mentor Stats (Earnings, Hours)
+router.get("/stats", protect, authorize(["mentor"]), getMentorStats);
 
 // 📌 Get Specific Mentor Details (Public/Protected)
 router.get("/:id", protect, getMentorById);
@@ -39,7 +43,9 @@ router.post("/sessions/:id/review", protect, reviewSession);
 // 📌 Get My Sessions (As Mentor or Mentee)
 router.get("/sessions/my", protect, getMySessions);
 
-// 📌 Update Session Status (Mentor: Confirm/Cancel/Complete)
-router.patch("/sessions/:id/status", protect, authorize(["mentor", "superadmin"]), updateSessionStatus);
+
+
+// 📌 Update Session Status (Mentor: Confirm/Cancel/Complete, Candidate: Cancel only)
+router.patch("/sessions/:id/status", protect, authorize(["mentor", "candidate", "superadmin"]), updateSessionStatus);
 
 export default router;

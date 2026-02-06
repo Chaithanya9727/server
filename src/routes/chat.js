@@ -48,7 +48,10 @@ router.post("/start/:userId", protect, async (req, res) => {
 router.get("/conversations", protect, async (req, res) => {
   try {
     const me = req.user._id;
-    const list = await Conversation.find({ participants: me })
+    const list = await Conversation.find({ 
+      participants: me,
+      lastMessageAt: { $exists: true } 
+    })
       .sort({ lastMessageAt: -1 })
       .populate("participants", "name email role avatar lastSeen");
     res.json(list);

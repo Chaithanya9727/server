@@ -1,21 +1,19 @@
-import https from "https";
+import axios from "axios";
 
 export const fetchArbeitNowJobs = async () => {
   // ArbeitNow API (Europe/Remote focus)
   const url = "https://www.arbeitnow.com/api/job-board-api";
 
   try {
-    const data = await new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            if(res.statusCode !== 200) reject(new Error(`ArbeitNow API Error: ${res.statusCode}`));
-            let d = "";
-            res.on('data', c => d+=c);
-            res.on('end', () => resolve(d));
-        }).on('error', reject);
+    const response = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+      }
     });
 
-    const json = JSON.parse(data);
-    const jobs = json.data || [];
+    const jobs = response.data.data || [];
 
     return jobs.slice(0, 15).map((job) => ({
         title: job.title,
@@ -23,7 +21,7 @@ export const fetchArbeitNowJobs = async () => {
         logo: "", // ArbeitNow often doesn't give logo URLs directly in list
         location: job.location,
         type: job.remote ? 'Remote' : 'On-site',
-        salary: "Ckec link", // Usually not provided in free tier
+        salary: "Check link", // Usually not provided in free tier
         description: "Check official application.",
         url: job.url, 
         source: "ArbeitNow",
@@ -33,7 +31,11 @@ export const fetchArbeitNowJobs = async () => {
     }));
 
   } catch (error) {
-    console.error("Failed to fetch ArbeitNow jobs:", error.message);
+    if (error.response) {
+      console.error(`Failed to fetch ArbeitNow jobs: ArbeitNow API Error: ${error.response.status}`);
+    } else {
+      console.error("Failed to fetch ArbeitNow jobs:", error.message);
+    }
     return [];
   }
 };
