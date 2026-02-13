@@ -84,7 +84,8 @@ const registerRecruiterHandler = async (req, res) => {
     const { 
        name, orgName, email, password, mobile,
        companyWebsite, designation, linkedinProfile,
-       aadhaarDocumentUrl, aadhaarLast4  // ⭐ NEW: Aadhaar verification
+       aadhaarDocumentUrl, aadhaarLast4,
+       pan, gst // ✨ NEW: PAN and GST
     } = req.body;
     
     const normalizedEmail = (email || "").toLowerCase();
@@ -126,7 +127,9 @@ const registerRecruiterHandler = async (req, res) => {
       aadhaarVerification: {
         maskedNumber: aadhaarLast4 ? `XXXX-XXXX-${aadhaarLast4}` : "",
         documentUrl: aadhaarDocumentUrl || "",
-        verified: false
+        verified: false,
+        pan: pan || "",
+        gst: gst || ""
       }
     });
 
@@ -508,7 +511,7 @@ function redirectWithToken(res, user) {
   return res.redirect(redirectUrl);
 }
 
-router.get("/google", passport.authenticate("google", { scope: ["profile", "email"], session: false }));
+router.get("/google", passport.authenticate("google", { scope: ["profile", "email"], session: false, state: true }));
 
 router.get(
   "/google/callback",

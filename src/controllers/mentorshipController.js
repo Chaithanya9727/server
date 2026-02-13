@@ -79,12 +79,24 @@ export const getMentorById = async (req, res) => {
     .lean();
 
 
+    // Check if current user (candidate) has any active session with this mentor
+    let hasSession = false;
+    if (req.user) {
+       const sessionExists = await Session.findOne({
+          mentor: mentor._id,
+          mentee: req.user._id,
+          status: { $ne: 'cancelled' }
+       });
+       hasSession = !!sessionExists;
+    }
+
     res.json({ 
        ...mentor, 
        averageRating: stats[0]?.avgRating?.toFixed(1) || "New",
        totalReviews: stats[0]?.totalReviews || 0,
        reviews,
-       bookedSessions
+       bookedSessions,
+       hasSession
     });
   } catch (err) {
     res.status(500).json({ message: "Server error" });

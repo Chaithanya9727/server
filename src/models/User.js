@@ -26,7 +26,9 @@ const userSchema = new mongoose.Schema(
       verified: { type: Boolean, default: false },
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Admin who verified
       verifiedAt: Date,
-      rejectionReason: { type: String, default: "" }
+      rejectionReason: { type: String, default: "" },
+      pan: { type: String, default: "" }, // ✨ New: Optional PAN
+      gst: { type: String, default: "" }   // ✨ New: Optional GST
     },
     
     upiVerification: {

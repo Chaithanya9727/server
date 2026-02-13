@@ -16,14 +16,18 @@ import { CLIENT_URL, SERVER_URL } from "./env.js";
    🚀 GOOGLE STRATEGY (Conditional)
    ============================================================ */
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  console.log(`✅ Google OAuth Initialized with ID ending in ...${process.env.GOOGLE_CLIENT_ID.slice(-5)}`);
   passport.use(
     new GoogleStrategy(
       {
         clientID: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL: `${SERVER_URL}/api/auth/google/callback`,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || `${SERVER_URL}/api/auth/google/callback`,
+        proxy: true,
+        userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
       },
       async (accessToken, refreshToken, profile, done) => {
+        console.log("🔍 Google Strategy: Callback URL used is:", process.env.GOOGLE_CALLBACK_URL || `${SERVER_URL}/api/auth/google/callback`);
         try {
           const email = profile.emails?.[0]?.value?.toLowerCase();
           if (!email) return done(new Error("Google account missing email."));

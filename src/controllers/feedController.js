@@ -7,8 +7,14 @@ import { isProfane } from "../utils/badWordFilter.js";
 // @route   GET /api/feed
 // @access  Private
 export const getFeed = asyncHandler(async (req, res) => {
-  const posts = await Post.find({})
-    .populate("author", "name avatar role company")
+  const { category } = req.query;
+  const filter = {};
+  if (category && category !== 'All') {
+    filter.category = category;
+  }
+
+  const posts = await Post.find(filter)
+    .populate("author", "name avatar role orgName company")
     .populate("comments.user", "name avatar")
     .sort({ createdAt: -1 });
   
@@ -19,23 +25,25 @@ export const getFeed = asyncHandler(async (req, res) => {
 // @route   POST /api/feed
 // @access  Private
 export const createPost = asyncHandler(async (req, res) => {
-  const { content, image, tags } = req.body;
+  const { title, content, image, tags, category } = req.body;
 
-  if (!content) {
+  if (!title || !content) {
     res.status(400);
-    throw new Error("Content is required");
+    throw new Error("Title and Content are required");
   }
 
-  if (isProfane(content)) {
+  if (isProfane(content) || isProfane(title)) {
     res.status(400);
     throw new Error("Your post contains inappropriate language. Please maintain a professional environment.");
   }
 
   const post = await Post.create({
     author: req.user._id,
+    title,
     content,
     image,
-    tags
+    tags: tags || [],
+    category: category || "General"
   });
 
   const populatedPost = await Post.findById(post._id).populate("author", "name avatar role");
@@ -88,8 +96,8 @@ export const toggleLike = asyncHandler(async (req, res) => {
   if (liked && post.author.toString() !== req.user._id.toString()) {
     await notifyUser({
       userId: post.author,
-      title: "New Like on your Post",
-      message: `${req.user.name} liked your post.`,
+      title: "New Like on your Question",
+      message: `${req.user.name} liked your question: "${post.title?.substring(0, 20)}..."`,
       link: `/community`,
       type: "social",
       emailEnabled: false
@@ -128,12 +136,12 @@ export const addComment = asyncHandler(async (req, res) => {
   if (post.author.toString() !== req.user._id.toString()) {
     await notifyUser({
       userId: post.author,
-      title: "New Comment on your Post",
-      message: `${req.user.name} commented: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
+      title: "New Answer/Comment on your Question",
+      message: `${req.user.name} answered: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
       link: `/community`,
       type: "social",
       emailEnabled: true,
-      emailSubject: "New Comment on your Post",
+      emailSubject: `New response on: ${post.title?.substring(0, 30)}`,
     });
   }
 

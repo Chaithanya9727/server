@@ -61,12 +61,20 @@ export const createEvent = async (req, res) => {
 
     const eventStart = new Date(body.startDate);
     const minStartDate = new Date();
-    minStartDate.setDate(minStartDate.getDate() + 7);
+    minStartDate.setHours(0, 0, 0, 0); // Allow starting today
 
     if (eventStart < minStartDate) {
       return res.status(400).json({ 
-        message: "Event cannot be scheduled so soon. Please select a start date at least 7 days from today to ensure proper planning and audience reach." 
+        message: "Event start date cannot be in the past." 
       });
+    }
+
+    if (new Date(body.endDate) <= eventStart) {
+      return res.status(400).json({ message: "End date must be after start date." });
+    }
+
+    if (new Date(body.registrationDeadline) > eventStart) {
+      return res.status(400).json({ message: "Registration deadline must be before or on the event start date." });
     }
 
     let coverImage;
@@ -125,12 +133,12 @@ export const getEvents = async (req, res) => {
     if (category && category !== "all") query.category = category;
 
     // 🗓️ Date-based Status Filtering
-    if (status === "live") {
+    if (status === "live" || status === "ongoing") {
       query.startDate = { $lte: now };
       query.endDate = { $gte: now };
     } else if (status === "upcoming") {
       query.startDate = { $gt: now };
-    } else if (status === "past") {
+    } else if (status === "past" || status === "ended") {
       query.endDate = { $lt: now };
     }
 
@@ -209,6 +217,14 @@ export const updateEvent = async (req, res) => {
         }
       }
     });
+
+    // Date Logic Validation
+    if (event.endDate <= event.startDate) {
+      return res.status(400).json({ message: "End date must be after start date." });
+    }
+    if (event.registrationDeadline > event.startDate) {
+      return res.status(400).json({ message: "Registration deadline must be before or on the event start date." });
+    }
 
     if (req.file) {
       if (event.coverImage?.publicId) {

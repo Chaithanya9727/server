@@ -77,7 +77,7 @@ export const analyzeResume = asyncHandler(async (req, res) => {
     const jsonString = outputText.replace(/```json/g, "").replace(/```/g, "").trim();
     
     const aiAnalysis = JSON.parse(jsonString);
-    res.json(aiAnalysis);
+    res.json({ ...aiAnalysis, fullText: text });
 
   } catch (error) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);

@@ -3,6 +3,7 @@ import { protect } from "../middleware/auth.js";
 import Conversation from "../models/Conversation.js";
 import Message from "../models/Message.js";
 import User from "../models/User.js";
+import Session from "../models/Session.js";
 import mongoose from "mongoose";
 
 const router = express.Router();
@@ -20,6 +21,19 @@ router.post("/start/:userId", protect, async (req, res) => {
     }
 
     const pair = [me, other].sort();
+
+    // 🛡️ Restriction: Candidate can only contact Mentor if they have a session
+    const otherUser = await User.findById(other);
+    if (req.user.role === 'candidate' && otherUser?.role === 'mentor') {
+       const sessionExists = await Session.findOne({
+          mentor: other,
+          mentee: me,
+          status: { $ne: 'cancelled' }
+       });
+       if (!sessionExists) {
+          return res.status(403).json({ message: "You can only contact a mentor after registering for a session." });
+       }
+    }
 
     let conv = await Conversation.findOne({
       participants: { $all: pair, $size: 2 },

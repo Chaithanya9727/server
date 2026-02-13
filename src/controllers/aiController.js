@@ -625,56 +625,46 @@ export const enhanceCV = asyncHandler(async (req, res) => {
       EXPERIENCE LEVEL: ${experience || "Mid-level"}
       
       RESUME CONTENT:
-      ${resumeText.substring(0, 3000)}
+      ${resumeText.substring(0, 8000)}
       
       Provide a detailed analysis in valid JSON format with these keys:
       
       {
-        "overallScore": number (0-100, current resume quality),
-        "enhancedSummary": "A rewritten, more impactful professional summary (2-3 sentences)",
-        "grammarIssues": [
-          {
-            "original": "exact text with issue",
-            "corrected": "corrected version",
-            "reason": "brief explanation"
-          }
-        ],
-        "contentImprovements": [
-          {
-            "section": "section name (e.g., Experience, Skills)",
-            "issue": "what's wrong",
-            "suggestion": "specific improvement",
-            "example": "rewritten example if applicable"
-          }
-        ],
-        "missingElements": [
-          "element 1 that should be added",
-          "element 2 that should be added"
-        ],
-        "keywordSuggestions": [
-          "keyword1",
-          "keyword2",
-          "keyword3"
-        ],
-        "formattingTips": [
-          "tip 1",
-          "tip 2"
-        ],
-        "impactMetrics": {
-          "beforeScore": number (0-100),
-          "afterScore": number (0-100, estimated after improvements),
-          "atsCompatibility": number (0-100),
-          "readability": number (0-100)
+        "overallScore": number,
+        "enhancedSummary": "Rewritten summary",
+        "rewrittenResume": {
+          "personal": { "name": "...", "email": "...", "phone": "...", "location": "...", "linkedin": "..." },
+          "experience": [
+            {
+              "role": "...", "company": "...", "location": "...", "period": "...",
+              "techStack": "React, TypeScript, ...",
+              "points": ["Enhanced bullet point 1", "Enhanced bullet point 2"]
+            }
+          ],
+          "education": [ { "school": "...", "degree": "...", "year": "...", "cgpa": "..." } ],
+          "skills": ["Programming Languages: ...", "Web Technologies: ..."],
+          "projects": [
+            { "title": "...", "description": "...", "techStack": "..." }
+          ],
+          "certifications": ["Certification 1", "Certification 2"],
+          "awards": ["Award 1"],
+          "languages": ["Language 1 (Proficiency)"]
         },
-        "actionableSteps": [
-          "Step 1: ...",
-          "Step 2: ...",
-          "Step 3: ..."
-        ]
+        "grammarIssues": [ ... ],
+        "contentImprovements": [ ... ],
+        "missingElements": [ ... ],
+        "keywordSuggestions": [ ... ],
+        "formattingTips": [ ... ],
+        "impactMetrics": { ... },
+        "actionableSteps": [ ... ]
       }
       
-      Be specific, actionable, and professional. Focus on ATS optimization, impact-driven language, and quantifiable achievements.
-      Return ONLY valid JSON, no markdown formatting.
+      CRITICAL INSTRUCTIONS:
+      1. DO NOT OMIT any professional details. Capture all work history, education, and technical projects.
+      2. ENHANCE bullet points using the Google XYZ formula: "Accomplished [X] as measured by [Y], by doing [Z]".
+      3. ENSURE the formatting is strictly professional and corporate-ready.
+      4. If certifications, languages, or awards are found in the text, include them in the respective fields.
+      Return ONLY valid JSON.
     `;
 
     const chatCompletion = await groq.chat.completions.create({
@@ -718,6 +708,13 @@ export const enhanceCV = asyncHandler(async (req, res) => {
         "Step 2: Use strong action verbs",
         "Step 3: Tailor resume to target role"
       ],
+      rewrittenResume: {
+        personal: { name: "Candidate Name", email: "candidate@example.com", phone: "+91-0000000000", location: "City, India" },
+        experience: [{ role: "Software Engineer", company: "Tech Corp", location: "Bangalore", period: "2020 - Present", techStack: "JavaScript, React, Node.js", points: ["Maintained legacy systems.", "Collaborated with cross-functional teams."] }],
+        education: [{ degree: "Bachelor of Engineering", school: "State University", year: "2020", cgpa: "8.5" }],
+        skills: ["Programming Languages: JavaScript, Python", "Tools: Git, Docker"],
+        projects: [{ title: "E-commerce Site", description: "Built a full-stack store.", techStack: "React, MongoDB" }]
+      },
       isFallback: true
     });
   }
